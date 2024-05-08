@@ -101,6 +101,7 @@ static inline void flush_tlb_kernel_range(unsigned long start, unsigned long end
 
 #else
 
+#include <linux/preempt.h>
 
 /* Reserved PMEGs. */
 extern char sun3_reserved_pmeg[SUN3_PMEGS_NUM];
@@ -114,6 +115,8 @@ static inline void flush_tlb_all(void)
 {
 	unsigned long addr;
 	unsigned char ctx, oldctx;
+
+	preempt_disable();
 
 	oldctx = sun3_get_context();
 	for (addr = 0x00000000; addr < TASK_SIZE; addr += SUN3_PMEG_SIZE) {
@@ -133,6 +136,8 @@ static inline void flush_tlb_all(void)
 			pmeg_vaddr[addr] = 0;
 		}
 	}
+
+	preempt_enable();
 }
 
 /* Clear user TLB entries within the context named in mm */
@@ -141,6 +146,8 @@ static inline void flush_tlb_mm (struct mm_struct *mm)
 	unsigned char oldctx;
 	unsigned char seg;
 	unsigned long i;
+
+	preempt_disable();
 
 	oldctx = sun3_get_context();
 	sun3_put_context(mm->context);
@@ -157,6 +164,8 @@ static inline void flush_tlb_mm (struct mm_struct *mm)
 	}
 
 	sun3_put_context(oldctx);
+
+	preempt_enable();
 }
 
 /* Flush a single TLB page. In this case, we're limited to flushing a
@@ -166,6 +175,8 @@ static inline void flush_tlb_page (struct vm_area_struct *vma,
 {
 	unsigned char oldctx;
 	unsigned char i;
+
+	preempt_disable();
 
 	oldctx = sun3_get_context();
 	sun3_put_context(vma->vm_mm->context);
@@ -179,6 +190,7 @@ static inline void flush_tlb_page (struct vm_area_struct *vma,
 	}
 	sun3_put_context(oldctx);
 
+	preempt_enable();
 }
 /* Flush a range of pages from TLB. */
 
@@ -189,6 +201,8 @@ static inline void flush_tlb_range (struct vm_area_struct *vma,
 	unsigned char seg, oldctx;
 
 	start &= ~SUN3_PMEG_MASK;
+
+	preempt_disable();
 
 	oldctx = sun3_get_context();
 	sun3_put_context(mm->context);
@@ -207,6 +221,8 @@ static inline void flush_tlb_range (struct vm_area_struct *vma,
 		start += SUN3_PMEG_SIZE;
 	}
 	sun3_put_context(oldctx);
+
+	preempt_enable();
 }
 
 static inline void flush_tlb_kernel_range(unsigned long start, unsigned long end)

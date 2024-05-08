@@ -3,6 +3,8 @@
 #define _M68K_CACHEFLUSH_H
 
 #include <linux/mm.h>
+#include <linux/preempt.h>
+
 #ifdef CONFIG_COLDFIRE
 #include <asm/mcfsim.h>
 #endif
@@ -63,6 +65,8 @@ static inline void flush_cf_icache(unsigned long start, unsigned long end)
 {
 	unsigned long set;
 
+	preempt_disable();
+
 	for (set = start; set <= end; set += (0x10 - 3)) {
 		__asm__ __volatile__ (
 			"cpushl %%ic,(%0)\n\t"
@@ -75,11 +79,15 @@ static inline void flush_cf_icache(unsigned long start, unsigned long end)
 			: "=a" (set)
 			: "a" (set));
 	}
+
+	preempt_enable();
 }
 
 static inline void flush_cf_dcache(unsigned long start, unsigned long end)
 {
 	unsigned long set;
+
+	preempt_disable();
 
 	for (set = start; set <= end; set += (0x10 - 3)) {
 		__asm__ __volatile__ (
@@ -93,11 +101,15 @@ static inline void flush_cf_dcache(unsigned long start, unsigned long end)
 			: "=a" (set)
 			: "a" (set));
 	}
+
+	preempt_enable();
 }
 
 static inline void flush_cf_bcache(unsigned long start, unsigned long end)
 {
 	unsigned long set;
+
+	preempt_disable();
 
 	for (set = start; set <= end; set += (0x10 - 3)) {
 		__asm__ __volatile__ (
@@ -111,6 +123,8 @@ static inline void flush_cf_bcache(unsigned long start, unsigned long end)
 			: "=a" (set)
 			: "a" (set));
 	}
+
+	preempt_enable();
 }
 
 /*
@@ -228,13 +242,20 @@ static inline void __flush_pages_to_ram(void *vaddr, unsigned int nr)
 		addr = ((unsigned long) vaddr) & ~(PAGE_SIZE - 1);
 		start = addr & ICACHE_SET_MASK;
 		end = (addr + nr * PAGE_SIZE - 1) & ICACHE_SET_MASK;
+
+		preempt_disable();
+
 		if (start > end) {
 			flush_cf_bcache(0, end);
 			end = ICACHE_MAX_ADDR;
 		}
 		flush_cf_bcache(start, end);
+
+		preempt_enable();
 	} else if (CPU_IS_040_OR_060) {
 		unsigned long paddr = __pa(vaddr);
+
+		preempt_disable();
 
 		do {
 			__asm__ __volatile__("nop\n\t"
@@ -244,6 +265,8 @@ static inline void __flush_pages_to_ram(void *vaddr, unsigned int nr)
 					     : : "a" (paddr));
 			paddr += PAGE_SIZE;
 		} while (--nr);
+
+		preempt_enable();
 	} else {
 		unsigned long _tmp;
 		__asm__ __volatile__("movec %%cacr,%0\n\t"

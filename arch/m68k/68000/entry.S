@@ -87,6 +87,21 @@ ret_from_exception:
 	btst	#5,%sp@(PT_OFF_SR)	/* check if returning to kernel*/
 	jeq	Luser_return		/* if so, skip resched, signals*/
 
+#ifdef CONFIG_PREEMPTION
+	movel	%sp,%d1			/* get thread_info pointer */
+	andl	#-THREAD_SIZE,%d1	/* at base of kernel stack */
+	movel	%d1,%a0
+	movel	%a0@(TINFO_FLAGS),%d1	/* get thread_info->flags */
+	btst	#TIF_NEED_RESCHED,%d1
+	jeq	Lkernel_return
+
+	movel	%a0@(TINFO_PREEMPT),%d1
+	jne	Lkernel_return
+
+	pea	Lkernel_return
+	jmp	preempt_schedule_irq	/* preempt the kernel */
+#endif /* CONFIG_PREEMPTION */
+
 Lkernel_return:
 	RESTORE_ALL
 

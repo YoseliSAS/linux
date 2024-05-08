@@ -241,7 +241,23 @@ syscall_exit_work:
 ENTRY(ret_from_exception)
 .Lret_from_exception:
 	btst	#5,%sp@(PT_OFF_SR)	| check if returning to kernel
+#ifdef CONFIG_PREEMPTION
+	jeq	2f
+
+	movel   %curptr@(TASK_STACK),%a0
+	tstb	%a0@(TINFO_FLAGS+3)	| check TIF_NEED_RESCHED
+	jpl	1f
+
+	movel	%a0@(TINFO_PREEMPT),%d1
+	jne	1f
+
+	pea	1f
+	jmp	preempt_schedule_irq	| preempt the kernel
+#else /* !CONFIG_PREEMPTION */
 	bnes	1f			| if so, skip resched, signals
+#endif /* !CONFIG_PREEMPTION */
+
+2:
 	| only allow interrupts when we are really the last one on the
 	| kernel stack, otherwise stack overflow can occur during
 	| heavy interrupt load
