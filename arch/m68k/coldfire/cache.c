@@ -10,6 +10,8 @@
 /***************************************************************************/
 
 #include <linux/kernel.h>
+#include <linux/preempt.h>
+
 #include <asm/coldfire.h>
 #include <asm/mcfsim.h>
 
@@ -25,6 +27,8 @@
 
 void mcf_cache_push(void)
 {
+	preempt_disable();
+
 	__asm__ __volatile__ (
 		"clrl	%%d0\n\t"
 		"1:\n\t"
@@ -42,6 +46,8 @@ void mcf_cache_push(void)
 		  "i" (DCACHE_SIZE / CACHE_WAYS),
 		  "i" (CACHE_WAYS)
 		: "d0", "a0" );
+
+	preempt_enable();
 }
 
 /***************************************************************************/
