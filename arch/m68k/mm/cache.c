@@ -8,6 +8,8 @@
  */
 
 #include <linux/module.h>
+#include <linux/preempt.h>
+
 #include <asm/cacheflush.h>
 #include <asm/traps.h>
 
@@ -62,13 +64,20 @@ void flush_icache_user_range(unsigned long address, unsigned long endaddr)
 		unsigned long start, end;
 		start = address & ICACHE_SET_MASK;
 		end = endaddr & ICACHE_SET_MASK;
+
+		preempt_disable();
+
 		if (start > end) {
 			flush_cf_icache(0, end);
 			end = ICACHE_MAX_ADDR;
 		}
 		flush_cf_icache(start, end);
+
+		preempt_enable();
 	} else if (CPU_IS_040_OR_060) {
 		address &= PAGE_MASK;
+
+		preempt_disable();
 
 		do {
 			asm volatile ("nop\n\t"
@@ -78,6 +87,8 @@ void flush_icache_user_range(unsigned long address, unsigned long endaddr)
 				      : : "a" (virt_to_phys_slow(address)));
 			address += PAGE_SIZE;
 		} while (address < endaddr);
+
+		preempt_enable();
 	} else {
 		unsigned long tmp;
 		asm volatile ("movec %%cacr,%0\n\t"
@@ -103,12 +114,16 @@ void flush_icache_user_page(struct vm_area_struct *vma, struct page *page,
 		unsigned long start, end;
 		start = addr & ICACHE_SET_MASK;
 		end = (addr + len) & ICACHE_SET_MASK;
+
+		preempt_disable();
+
 		if (start > end) {
 			flush_cf_icache(0, end);
 			end = ICACHE_MAX_ADDR;
 		}
 		flush_cf_icache(start, end);
 
+		preempt_enable();
 	} else if (CPU_IS_040_OR_060) {
 		asm volatile ("nop\n\t"
 			      ".chip 68040\n\t"

@@ -15,6 +15,7 @@
 #include <linux/mm.h>
 #include <linux/swap.h>
 #include <linux/kernel.h>
+#include <linux/preempt.h>
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/init.h>
@@ -139,10 +140,13 @@ void __init init_pointer_table(void *table, int type)
 
 void *get_pointer_table(int type)
 {
-	ptable_desc *dp = ptable_list[type].next;
-	unsigned int mask = list_empty(&ptable_list[type]) ? 0 : PD_MARKBITS(dp);
-	unsigned int tmp, off;
+	unsigned int mask, tmp, off;
+	ptable_desc *dp;
 
+	preempt_disable();
+
+	dp = ptable_list[type].next;
+	mask = list_empty(&ptable_list[type]) ? 0 : PD_MARKBITS(dp);
 	/*
 	 * For a pointer table for a user process address space, a
 	 * table is taken from a page allocated for the purpose.  Each
@@ -153,8 +157,12 @@ void *get_pointer_table(int type)
 		void *page;
 		ptable_desc *new;
 
+		preempt_enable_no_resched();
+
 		if (!(page = (void *)get_zeroed_page(GFP_KERNEL)))
 			return NULL;
+
+		preempt_disable();
 
 		if (type == TABLE_PTE) {
 			/*
@@ -170,6 +178,8 @@ void *get_pointer_table(int type)
 		PD_MARKBITS(new) = ptable_mask(type) - 1;
 		list_add_tail(new, dp);
 
+		preempt_enable_no_resched();
+
 		return (pmd_t *)page;
 	}
 
@@ -180,6 +190,9 @@ void *get_pointer_table(int type)
 		/* move to end of list */
 		list_move_tail(dp, &ptable_list[type]);
 	}
+
+	preempt_enable_no_resched();
+
 	return page_address(PD_PAGE(dp)) + off;
 }
 
@@ -189,6 +202,8 @@ int free_pointer_table(void *table, int type)
 	unsigned long ptable = (unsigned long)table;
 	unsigned long page = ptable & PAGE_MASK;
 	unsigned int mask = 1U << ((ptable - page)/ptable_size(type));
+
+	preempt_disable();
 
 	dp = PD_PTABLE(page);
 	if (PD_MARKBITS (dp) & mask)
@@ -203,6 +218,9 @@ int free_pointer_table(void *table, int type)
 		if (type == TABLE_PTE)
 			pagetable_pte_dtor(virt_to_ptdesc((void *)page));
 		free_page (page);
+
+		preempt_enable_no_resched();
+
 		return 1;
 	} else if (ptable_list[type].next != dp) {
 		/*
@@ -211,6 +229,9 @@ int free_pointer_table(void *table, int type)
 		 */
 		list_move(dp, &ptable_list[type]);
 	}
+
+	preempt_enable_no_resched();
+
 	return 0;
 }
 
