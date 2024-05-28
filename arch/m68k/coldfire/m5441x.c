@@ -241,10 +241,44 @@ static void __init m5441x_fec_init(void)
 	__raw_writeb(0x03, MCFGPIO_PAR_FEC);
 }
 
+static void __init uart6_putc(const char c)
+{
+	/* MCFUART_BASE6 is the base address */
+	int i;
+	unsigned char __iomem *membase = (unsigned char __iomem	*)MCFUART_BASE6;
+
+	for (i = 0; (i < 0x10000); i++) {
+		if (readb(membase + MCFUART_USR) & MCFUART_USR_TXREADY)
+			break;
+	}
+	writeb(c, membase + MCFUART_UTB);
+	for (i = 0; (i < 0x10000); i++) {
+		if (readb(membase + MCFUART_USR) & MCFUART_USR_TXREADY)
+			break;
+	}
+}
+
+static void __init uart6_console_write(struct console *co, const char *s, unsigned int count)
+{
+	for (; (count); count--, s++) {
+		uart6_putc(*s);
+		if (*s == '\n')
+			uart6_putc('\r');
+	}
+}
+
+static struct console uart6_console = {
+    .name   = "uart6",
+    .write  = uart6_console_write,
+    .flags  = CON_PRINTBUFFER,
+    .index  = -1,
+};
+
 void __init config_BSP(char *commandp, int size)
 {
 	m5441x_clk_init();
 	mach_sched_init = hw_timer_init;
 	m5441x_uarts_init();
+	//register_console(&uart6_console);
 	m5441x_fec_init();
 }
