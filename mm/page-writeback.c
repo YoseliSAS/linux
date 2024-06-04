@@ -2879,7 +2879,9 @@ bool folio_mark_dirty(struct folio *folio)
 		 */
 		if (folio_test_reclaim(folio))
 			folio_clear_reclaim(folio);
-		return mapping->a_ops->dirty_folio(mapping, folio);
+		if (mapping->a_ops->dirty_folio)
+			return mapping->a_ops->dirty_folio(mapping, folio);
+		return noop_dirty_folio(mapping, folio);
 	}
 
 	return noop_dirty_folio(mapping, folio);
