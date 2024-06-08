@@ -78,10 +78,12 @@ typedef struct user_m68kfp_struct elf_fpregset_t;
    the loader.  We need to make sure that it is out of the way of the program
    that it will "exec", and that there is sufficient room for the brk.  */
 
-#ifndef CONFIG_SUN3
-#define ELF_ET_DYN_BASE         0xD0000000UL
-#else
+#if defined(CONFIG_COLDFIRE)
+#define ELF_ET_DYN_BASE		(TASK_UNMAPPED_BASE + 0x10000000)
+#elif defined(CONFIG_SUN3)
 #define ELF_ET_DYN_BASE         0x0D800000UL
+#else
+#define ELF_ET_DYN_BASE         0xD0000000UL
 #endif
 
 #define ELF_CORE_COPY_REGS(pr_reg, regs)				\
