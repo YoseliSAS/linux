@@ -151,15 +151,19 @@ static struct clk * const enable_clks[] __initconst = {
 	&__clk_0_20, /* intc0 */
 	&__clk_0_23, /* dspi.0 */
 	&__clk_0_24, /* uart0 */
-	&__clk_0_25, /* uart1 */
-	&__clk_0_26, /* uart2 */
-	&__clk_0_27, /* uart3 */
+	&__clk_1_26, /* uart6 */
 
 	&__clk_0_33, /* pit.1 */
 	&__clk_0_37, /* eport */
 	&__clk_0_48, /* pll */
 	&__clk_0_51, /* esdhc */
+	&__clk_0_53, /* enet-fec */
+	&__clk_0_54, /* enet-fec */
+	&__clk_0_55, /* switch.0 */
+	&__clk_0_56, /* switch.1 */
+	&__clk_0_63, /* nand */
 
+	&__clk_1_4, /* i2c.2 */
 	&__clk_1_36, /* CCM/reset module/Power management */
 	&__clk_1_37, /* gpio */
 };
@@ -167,6 +171,9 @@ static struct clk * const disable_clks[] __initconst = {
 	&__clk_0_14, /* i2c.1 */
 	&__clk_0_22, /* i2c.0 */
 	&__clk_0_23, /* dspi.0 */
+	&__clk_0_25, /* uart1 */
+	&__clk_0_26, /* uart2 */
+	&__clk_0_27, /* uart3 */
 	&__clk_0_28, /* tmr.1 */
 	&__clk_0_29, /* tmr.2 */
 	&__clk_0_30, /* tmr.2 */
@@ -181,19 +188,13 @@ static struct clk * const disable_clks[] __initconst = {
 	&__clk_0_47, /* ssi.0 */
 	&__clk_0_49, /* rng */
 	&__clk_0_50, /* ssi.1 */
-	&__clk_0_53, /* enet-fec */
-	&__clk_0_54, /* enet-fec */
-	&__clk_0_55, /* switch.0 */
-	&__clk_0_56, /* switch.1 */
 
 	&__clk_1_2, /* 1-wire */
-	&__clk_1_4, /* i2c.2 */
 	&__clk_1_5, /* i2c.3 */
 	&__clk_1_6, /* i2c.4 */
 	&__clk_1_7, /* i2c.5 */
 	&__clk_1_24, /* uart 4 */
 	&__clk_1_25, /* uart 5 */
-	&__clk_1_26, /* uart 6 */
 	&__clk_1_27, /* uart 7 */
 	&__clk_1_28, /* uart 8 */
 	&__clk_1_29, /* uart 9 */
@@ -231,7 +232,8 @@ static void __init m5441x_uarts_init(void)
 {
 	__raw_writeb(0x0f, MCFGPIO_PAR_UART0);
 	__raw_writeb(0x00, MCFGPIO_PAR_UART1);
-	__raw_writeb(0x00, MCFGPIO_PAR_UART2);
+	/* UART6 is our console */
+	__raw_writeb(0xaf, MCFGPIO_PAR_UART2);
 }
 
 static void __init m5441x_fec_init(void)
