@@ -179,11 +179,19 @@ static const struct fec_devinfo fec_s32v234_info = {
 		  FEC_QUIRK_HAS_MDIO_C45,
 };
 
+static const struct fec_devinfo fec_m54418_info = {
+	.quirks = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_RACC,
+};
+
 static struct platform_device_id fec_devtype[] = {
 	{
 		/* keep it for coldfire */
 		.name = DRIVER_NAME,
 		.driver_data = 0,
+	}, {
+		/* keep it for coldfire 54418 */
+		.name = "enet-fec",
+		.driver_data = (__kernel_ulong_t)&fec_m54418_info,
 	}, {
 		/* sentinel */
 	}
@@ -2639,8 +2647,8 @@ static int fec_enet_get_regs_len(struct net_device *ndev)
 
 /* List of registers that can be safety be read to dump them with ethtool */
 #if defined(CONFIG_M523x) || defined(CONFIG_M527x) || defined(CONFIG_M528x) || \
-	defined(CONFIG_M520x) || defined(CONFIG_M532x) || defined(CONFIG_ARM) || \
-	defined(CONFIG_ARM64) || defined(CONFIG_COMPILE_TEST)
+	defined(CONFIG_M520x) || defined(CONFIG_M532x) || defined(CONFIG_M5441x) || \
+	defined(CONFIG_ARM) || defined(CONFIG_ARM64) || defined(CONFIG_COMPILE_TEST)
 static __u32 fec_enet_register_version = 2;
 static u32 fec_enet_register_offset[] = {
 	FEC_IEVENT, FEC_IMASK, FEC_R_DES_ACTIVE_0, FEC_X_DES_ACTIVE_0,

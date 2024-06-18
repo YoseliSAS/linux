@@ -273,6 +273,9 @@
 #define MCFGPIO_PAR_DEBUGl	0xec09405c
 #define MCFGPIO_PAR_FEC		0xec09405e
 
+#define MCFGPIO_PAR_SIMP0H  0xec094056
+#define MCFGPIO_SRCR_FEC    0xec09406d
+
 /* generalization for generic gpio support */
 #define MCFGPIO_PODR		MCFGPIO_PODR_A
 #define MCFGPIO_PDDR		MCFGPIO_PDDR_A
