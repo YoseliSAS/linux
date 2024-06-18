@@ -311,6 +311,12 @@ config STMARK2
 	help
 	  Support for the Sysam stmark2 open-hardware generic board.
 
+config DLC_NEXT
+	bool "Wabtec DLC Next board support"
+	depends on M5441x
+	help
+	  Support for the Wabtec DLC NEXT board.
+
 config FIREBEE
 	bool "FireBee board support"
 	depends on M547x
