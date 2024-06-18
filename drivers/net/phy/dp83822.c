@@ -529,6 +529,12 @@ static int dp83826_config_rmii_mode(struct phy_device *phydev)
 
 		if (ret)
 			return ret;
+	} else {
+		printk("Force slave mode\n");
+		ret = phy_set_bits_mmd(phydev, DP83822_DEVADDR, MII_DP83822_RCSR,
+					       DP83822_RMII_MODE_SEL);
+		if (ret)
+			return ret;
 	}
 
 	return 0;
