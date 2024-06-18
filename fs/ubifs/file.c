@@ -1474,6 +1474,7 @@ static bool ubifs_dirty_folio(struct address_space *mapping,
 	 * An attempt to dirty a page without budgeting for it - should not
 	 * happen.
 	 */
+	VM_BUG_ON_FOLIO(ret != false, folio);
 	ubifs_assert(c, ret == false);
 	return ret;
 }
