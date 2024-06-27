@@ -152,6 +152,10 @@ _start0:
 
 _start:
 	nop					/* filler */
+#if defined(CONFIG_M5441x)
+	movel	#(0x8ff00000+0x221), %d0
+	movec	%d0, %rambar1
+#endif
 	movew	#0x2700, %sr			/* no interrupts */
 	movel	#CACHE_INIT,%d0			/* disable cache */
 	movec	%d0,%CACR
