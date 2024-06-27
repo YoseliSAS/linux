@@ -715,13 +715,11 @@ static int vf610_nfc_write_oob(struct nand_chip *chip, int page)
 	return nand_prog_page_end_op(chip);
 }
 
-#ifdef CONFIG_OF
 static const struct of_device_id vf610_nfc_dt_ids[] = {
 	{ .compatible = "fsl,vf610-nfc", .data = (void *)NFC_VFC610 },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, vf610_nfc_dt_ids);
-#endif
 
 static const struct platform_device_id vf610_nfc_id_table[] = {
 	{
@@ -841,7 +839,6 @@ static int vf610_nfc_probe(struct platform_device *pdev)
 	struct mtd_info *mtd;
 	struct nand_chip *chip;
 	struct nand_chip *pdata;
-	struct device_node *child;
 	int err;
 	int irq;
 
@@ -880,45 +877,41 @@ static int vf610_nfc_probe(struct platform_device *pdev)
 		return PTR_ERR(nfc->regs);
 	}
 
-#ifdef CONFIG_OF
-	nfc->clk = devm_clk_get_enabled(&pdev->dev, NULL);
+	nfc->clk = devm_clk_get_optional_enabled(&pdev->dev, NULL);
 	if (IS_ERR(nfc->clk)) {
 		dev_err(nfc->dev, "Unable to get and enable clock!\n");
 		return PTR_ERR(nfc->clk);
 	}
 
-	const void *data = device_get_match_data(&pdev->dev);
-	nfc->variant = (enum vf610_nfc_variant)data;
-	if (!nfc->variant) {
-		dev_err(nfc->dev, "No variant data found!\n");
-		return -ENODEV;
-	}
-#else
-	nfc->variant = (enum vf610_nfc_variant)platform_get_device_id(pdev)->driver_data;
-#endif
-#ifdef CONFIG_OF
-	for_each_available_child_of_node(nfc->dev->of_node, child) {
-		if (of_device_is_compatible(child, "fsl,vf610-nfc-nandcs")) {
-
-			if (nand_get_flash_node(chip)) {
-				dev_err(nfc->dev,
-					"Only one NAND chip supported!\n");
-				of_node_put(child);
-				return -EINVAL;
-			}
-
-			nand_set_flash_node(chip, child);
+	if (pdev->dev.of_node) {
+		const void *data = device_get_match_data(&pdev->dev);
+		nfc->variant = (enum vf610_nfc_variant)data;
+		if (!nfc->variant) {
+			dev_err(nfc->dev, "No variant data found!\n");
+			return -ENODEV;
 		}
-	}
 
-	if (!nand_get_flash_node(chip)) {
-		dev_err(nfc->dev, "NAND chip sub-node missing!\n");
-		return -ENODEV;
+		for_each_available_child_of_node_scoped(nfc->dev->of_node, child) {
+			if (of_device_is_compatible(child, "fsl,vf610-nfc-nandcs")) {
+
+				if (nand_get_flash_node(chip)) {
+					dev_err(nfc->dev,
+						"Only one NAND chip supported!\n");
+					of_node_put(child);
+					return -EINVAL;
+				}
+
+				nand_set_flash_node(chip, child);
+			}
+		}
+
+		if (!nand_get_flash_node(chip)) {
+			dev_err(nfc->dev, "NAND chip sub-node missing!\n");
+			return -ENODEV;
+		}
+	} else {
+		nfc->variant = (enum vf610_nfc_variant)platform_get_device_id(pdev)->driver_data;
 	}
-#else
-	nfc->clk = NULL;
-	mtd->dev.parent = &pdev->dev;
-#endif
 
 	chip->options |= NAND_NO_SUBPAGE_WRITE;
 
