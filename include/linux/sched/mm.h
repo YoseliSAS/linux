@@ -191,6 +191,8 @@ unsigned long mm_get_unmapped_area(struct mm_struct *mm, struct file *filp,
 				   unsigned long addr, unsigned long len,
 				   unsigned long pgoff, unsigned long flags);
 
+int dump_memory_map(struct task_struct *task);
+
 unsigned long
 arch_get_unmapped_area_vmflags(struct file *filp, unsigned long addr,
 			       unsigned long len, unsigned long pgoff,

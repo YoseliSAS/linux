@@ -1299,6 +1299,8 @@ out_free_interp:
 
 	finalize_exec(bprm);
 	START_THREAD(elf_ex, regs, elf_entry, bprm->p);
+	pr_info("%s: Dump memory for %s (%d):\n", __func__, current->comm, task_pid_nr(current));
+    dump_memory_map(current);
 	retval = 0;
 out:
 	return retval;

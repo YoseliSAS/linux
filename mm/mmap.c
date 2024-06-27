@@ -76,6 +76,89 @@ int mmap_rnd_compat_bits __read_mostly = CONFIG_ARCH_MMAP_RND_COMPAT_BITS;
 static bool ignore_rlimit_data;
 core_param(ignore_rlimit_data, ignore_rlimit_data, bool, 0644);
 
+int dump_memory_map(struct task_struct *task)
+{
+    struct mm_struct *mm = task->mm;
+    struct vm_area_struct *vma;
+    struct file *file;
+    struct path *path;
+    char *buf;
+    char *pathname;
+
+	if (!mm) {
+		return -ENOMEM;
+	}
+
+	pr_info("start_brk: %08lx, brk: %08lx\n", mm->start_brk, mm->brk);
+
+	MA_STATE(mas, &mm->mm_mt, 0, -1);
+    // Acquire the read lock for mmap_lock
+    down_read(&mm->mmap_lock);
+	mas_lock(&mas);
+	for (vma = mas_find(&mas, ULONG_MAX); vma; vma = mas_find(&mas, ULONG_MAX)) {
+		char perms[5] = "---p"; // Default permissions
+		// Set permissions based on vm_flags
+		if (vma->vm_flags & VM_READ) perms[0] = 'r';
+		if (vma->vm_flags & VM_WRITE) perms[1] = 'w';
+		if (vma->vm_flags & VM_EXEC) perms[2] = 'x';
+		if (vma->vm_flags & VM_MAYSHARE) perms[3] = 's';
+
+		if (vma->vm_file) { // If there's an associated file
+			buf = (char *)__get_free_page(GFP_KERNEL);
+			if (!buf) {
+				continue; // Handle memory allocation failure
+			}
+
+			file = vma->vm_file;
+			path = &file->f_path;
+			pathname = d_path(path, buf, PAGE_SIZE);
+			if (IS_ERR(pathname)) {
+				pathname = NULL;
+			}
+
+			// Print memory area information with file path
+			pr_info("%08lx-%08lx %s %08lx %02x:%02x %lu %s\n",
+				vma->vm_start, vma->vm_end,
+				perms,
+				vma->vm_pgoff << PAGE_SHIFT,
+				MAJOR(file_inode(file)->i_rdev),
+				MINOR(file_inode(file)->i_rdev),
+				file_inode(file)->i_ino,
+				pathname ? pathname : "");
+
+			free_page((unsigned long)buf);
+		} else {
+			char *special_area_name = NULL;
+
+			// Check for heap
+			if (vma->vm_end > mm->start_brk && vma->vm_start < mm->brk) {
+				special_area_name = "[heap]";
+			} 
+			// Check for stack
+			else if (vma->vm_start <= mm->start_stack && vma->vm_end >= mm->start_stack) {
+				special_area_name = "[stack]";
+			}
+			// Check for vdso
+			else if (vma->vm_flags & VM_EXEC && vma->vm_flags & VM_READ && !vma->vm_file) {
+				special_area_name = "[vdso]";
+			}
+
+			// Print memory area information without file path
+			pr_info("%08lx-%08lx %s %08lx 00:00 0 %s\n",
+				vma->vm_start, vma->vm_end,
+				perms,
+				vma->vm_pgoff << PAGE_SHIFT,
+				special_area_name ? special_area_name : "    ");
+		}
+	}
+	mas_unlock(&mas);
+    // Release the read lock for mmap_lock
+    up_read(&mm->mmap_lock);
+
+    return 0;
+}
+EXPORT_SYMBOL(dump_memory_map);
+
 static void unmap_region(struct mm_struct *mm, struct ma_state *mas,
 		struct vm_area_struct *vma, struct vm_area_struct *prev,
 		struct vm_area_struct *next, unsigned long start,

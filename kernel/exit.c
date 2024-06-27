@@ -828,6 +828,8 @@ void __noreturn do_exit(long code)
 	coredump_task_exit(tsk);
 	ptrace_event(PTRACE_EVENT_EXIT, code);
 	user_events_exit(tsk);
+	pr_info("%s: Dump memory for %s (%d):\n", __func__, tsk->comm, task_pid_nr(tsk));
+	dump_memory_map(tsk);
 
 	io_uring_files_cancel();
 	exit_signals(tsk);  /* sets PF_EXITING */
