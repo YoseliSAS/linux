@@ -966,6 +966,11 @@ SYSCALL_DEFINE1(setfsgid, gid_t, gid)
  */
 SYSCALL_DEFINE0(getpid)
 {
+	void hexdump(unsigned int addr, unsigned int len);
+	printk("%s(%d): dumping 0x80000000:\n", __FILE__, __LINE__);
+	hexdump(0x80000000, 0x20);
+	printk("%s(%d): dumping 0x80002000:\n", __FILE__, __LINE__);
+	hexdump(0x80002000, 0x20);
 	return task_tgid_vnr(current);
 }
 

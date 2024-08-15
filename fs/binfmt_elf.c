@@ -66,6 +66,21 @@
 #define elf_check_fdpic(ex) false
 #endif
 
+void hexdump(unsigned int addr, unsigned int len);
+void hexdump(unsigned int addr, unsigned int len)
+{
+       unsigned char __user *p = (unsigned char __user *) addr;
+       unsigned int i;
+       unsigned char v;
+
+       for (i = 0; i < len; i++, p++) {
+               if ((i % 16) == 0) printk("%08x: ", i);
+               get_user(v, p);
+               printk(KERN_CONT "%02x ", v);
+               if (((i+1) % 16) == 0) printk(KERN_CONT "\n");
+       }
+} 
+
 static int load_elf_binary(struct linux_binprm *bprm);
 
 #ifdef CONFIG_USELIB

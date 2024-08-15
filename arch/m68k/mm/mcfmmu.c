@@ -148,6 +148,7 @@ int cf_tlb_miss(struct pt_regs *regs, int write, int dtlb, int extension_word)
 		mmu_write(MMUOR, MMUOR_ACC | MMUOR_UAA);
 	else
 		mmu_write(MMUOR, MMUOR_ITLB | MMUOR_ACC | MMUOR_UAA);
+	printk("%cTLB-MIS: mmutr=%08lx mmudr=%08lx mmuor=%08x/%08x mmuar=%08lx\n", (dtlb) ? 'D' : 'I', mmutr, (pte_val(*pte) & PAGE_MASK) | ((pte->pte) & CF_PAGE_MMUDR_MASK) | MMUDR_SZ_8KB | MMUDR_X, (dtlb) ? MMUOR_ACC | MMUOR_UAA : MMUOR_ITLB | MMUOR_ACC | MMUOR_UAA, mmu_read(MMUOR), mmuar);
 	ret = 0;
 out:
 	if (pte && !KMAPAREA(mmuar))
