@@ -76,8 +76,8 @@
 #define KMAP_START	0x0dc00000
 #define KMAP_END	0x0e000000
 #elif defined(CONFIG_COLDFIRE)
-#define KMAP_START	0xe0000000
-#define KMAP_END	0xf0000000
+#define KMAP_START     0xd8000000
+#define KMAP_END       0xe0000000
 #elif defined(CONFIG_VIRT)
 #define	KMAP_START	0xdf000000
 #define	KMAP_END	0xff000000
@@ -92,7 +92,7 @@ extern unsigned long m68k_vmalloc_end;
 #define VMALLOC_END m68k_vmalloc_end
 #elif defined(CONFIG_COLDFIRE)
 #define VMALLOC_START	0xd0000000
-#define VMALLOC_END	0xe0000000
+#define VMALLOC_END	0xd8000000
 #elif defined(CONFIG_VIRT)
 #define VMALLOC_OFFSET	PAGE_SIZE
 #define VMALLOC_START (((unsigned long) high_memory + VMALLOC_OFFSET) & ~(VMALLOC_OFFSET-1))
