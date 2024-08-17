@@ -19,6 +19,7 @@
 #include <linux/highmem.h>
 #include <linux/crc32.h>
 #include <linux/jffs2.h>
+#include <linux/writeback.h>
 #include "nodelist.h"
 
 static int jffs2_write_end(struct file *filp, struct address_space *mapping,
@@ -75,6 +76,7 @@ const struct address_space_operations jffs2_file_address_operations =
 	.read_folio =	jffs2_read_folio,
 	.write_begin =	jffs2_write_begin,
 	.write_end =	jffs2_write_end,
+	.dirty_folio =	filemap_dirty_folio,
 };
 
 static int jffs2_do_readpage_nolock (struct inode *inode, struct page *pg)
