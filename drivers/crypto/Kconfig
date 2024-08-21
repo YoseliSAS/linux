@@ -64,6 +64,71 @@ config CRYPTO_DEV_GEODE
 	  To compile this driver as a module, choose M here: the module
 	  will be called geode-aes.
 
+config CRYPTO_DEV_MCFCAU
+        bool "Support for Freescale Coldfire Cryptographic Acceleration Unit (CAU)"
+        depends on M5441x
+        select CRYPTO_ALGAPI
+        help
+          The cryptographic acceleration unit (CAU) is a ColdFire coprocessor
+          implementing a set of specialized operations in hardware. For example,
+          you can find it on MCF5445X, or M5441X.
+
+          Say Y here if you want to use CAU.
+
+config CRYPTO_DEV_MCFCAU_DES
+        tristate "DES and Triple DES cipher algorithms (coldfire)"
+        depends on CRYPTO_DEV_MCFCAU
+        select CRYPTO_ALGAPI
+        select CRYPTO_BLKCIPHER
+        help
+          DES cipher algorithm (FIPS 46-2), and Triple DES EDE (FIPS 46-3).
+
+          Say 'Y' here to use the CAU coprocessor for
+          the CryptoAPI DES and 3DES alogrithms.
+
+          To compile this driver as a module, choose M here: the module
+          will be called mcfcau-des.
+
+config CRYPTO_DEV_MCFCAU_AES
+        tristate "AES cipher algorithm (coldfire)"
+        depends on CRYPTO_DEV_MCFCAU
+        select CRYPTO_ALGAPI
+        select CRYPTO_BLKCIPHER
+        help
+          AES cipher algorithm (FIPS 197).
+
+          Say 'Y' here to use the CAU coprocessor for
+          the CryptoAPI AES alogrithm.
+
+          To compile this driver as a module, choose M here: the module
+          will be called mcfcau-aes.
+
+config CRYPTO_DEV_MCFCAU_MD5
+        tristate "MD5 digest algorithm (coldfire)"
+        depends on CRYPTO_DEV_MCFCAU
+        select CRYPTO_ALGAPI
+        help
+          MD5 message digest algorithm (RFC1321).
+
+          Say 'Y' here to use the CAU coprocessor for
+          the CryptoAPI MD5 alogrithm.
+
+          To compile this driver as a module, choose M here:
+          the module will be called mcfcau-md5.
+
+config CRYPTO_DEV_MCFCAU_SHA1
+        tristate "SHA1 digest algorithm (coldfire)"
+        depends on CRYPTO_DEV_MCFCAU
+        select CRYPTO_ALGAPI
+        help
+          SHA-1 secure hash standard (FIPS 180-1/DFIPS 180-2).
+
+          Say 'Y' here to use the CAU coprocessor for
+          the CryptoAPI SHA1 alogrithm.
+
+          To compile this driver as a module, choose M here: the module
+          will be called mcfcau-sha1.
+
 config ZCRYPT
 	tristate "Support for s390 cryptographic adapters"
 	depends on S390
