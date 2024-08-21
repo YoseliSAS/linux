@@ -593,7 +593,7 @@ static struct flexcan_platform_data mcf5441x_flexcan_info = {
 static struct resource mcf5441x_flexcan0_resource[] = {
 	{
 		.start = MCFFLEXCAN_BASE0,
-		.end = MCFFLEXCAN_BASE0 + MCFFLEXCAN_SIZE,
+		.end = MCFFLEXCAN_BASE0 + MCFFLEXCAN_SIZE - 1,
 		.flags = IORESOURCE_MEM,
 	},
 	{
@@ -618,6 +618,37 @@ static struct platform_device mcf_flexcan0 = {
 	.id = 0,
 	.num_resources = ARRAY_SIZE(mcf5441x_flexcan0_resource),
 	.resource = mcf5441x_flexcan0_resource,
+	.dev.platform_data = &mcf5441x_flexcan_info,
+};
+
+static struct resource mcf5441x_flexcan1_resource[] = {
+	{
+		.start = MCFFLEXCAN_BASE1,
+		.end = MCFFLEXCAN_BASE1 + MCFFLEXCAN_SIZE - 1,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.start = MCF_IRQ_IFL1,
+		.end = MCF_IRQ_IFL1,
+		.flags = IORESOURCE_IRQ,
+	},
+	{
+		.start = MCF_IRQ_BOFF1,
+		.end = MCF_IRQ_BOFF1,
+		.flags = IORESOURCE_IRQ,
+	},
+	{
+		.start = MCF_IRQ_ERR1,
+		.end = MCF_IRQ_ERR1,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device mcf_flexcan1 = {
+	.name = "flexcan-mcf5441x",
+	.id = 1,
+	.num_resources = ARRAY_SIZE(mcf5441x_flexcan1_resource),
+	.resource = mcf5441x_flexcan1_resource,
 	.dev.platform_data = &mcf5441x_flexcan_info,
 };
 #endif /* MCFFLEXCAN_SIZE */
@@ -659,6 +690,7 @@ static struct platform_device *mcf_devices[] __initdata = {
 #endif
 #ifdef MCFFLEXCAN_SIZE
 	&mcf_flexcan0,
+	&mcf_flexcan1,
 #endif
 };
 
