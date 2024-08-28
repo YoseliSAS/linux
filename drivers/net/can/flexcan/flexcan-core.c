@@ -2027,6 +2027,7 @@ static int flexcan_setup_stop_mode(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_OF
 static const struct of_device_id flexcan_of_match[] = {
 	{ .compatible = "fsl,imx8qm-flexcan", .data = &fsl_imx8qm_devtype_data, },
 	{ .compatible = "fsl,imx8mp-flexcan", .data = &fsl_imx8mp_devtype_data, },
@@ -2044,6 +2045,7 @@ static const struct of_device_id flexcan_of_match[] = {
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, flexcan_of_match);
+#endif
 
 static const struct platform_device_id flexcan_id_table[] = {
 	{
@@ -2112,7 +2114,15 @@ static int flexcan_probe(struct platform_device *pdev)
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);
 
+#ifdef CONFIG_OF
 	devtype_data = device_get_match_data(&pdev->dev);
+	if (!devtype_data) {
+		dev_err(&pdev->dev, "no device data found\n");
+		return -EINVAL;
+	}
+#else
+	devtype_data = (const struct flexcan_devtype_data *)platform_get_device_id(pdev)->driver_data;
+#endif
 
 	if ((devtype_data->quirks & FLEXCAN_QUIRK_SUPPORT_FD) &&
 	    !((devtype_data->quirks &
@@ -2382,7 +2392,7 @@ static struct platform_driver flexcan_driver = {
 	.driver = {
 		.name = DRV_NAME,
 		.pm = &flexcan_pm_ops,
-		.of_match_table = flexcan_of_match,
+		.of_match_table = of_match_ptr(flexcan_of_match),
 	},
 	.probe = flexcan_probe,
 	.remove = flexcan_remove,
