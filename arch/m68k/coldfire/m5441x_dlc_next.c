@@ -137,6 +137,10 @@ static int __init init_m5441x_dlc_next(void)
 	fbctl |= MCFGPIO_PAR_FBCTL_TA_NFC_RB;
 	__raw_writeb(fbctl, MCFGPIO_PAR_FBCTL);
 
+	/* Configure fec interfaces */
+	__raw_writeb(0x03, MCFGPIO_PAR_FEC);
+	__raw_writeb(0x0f, MCFGPIO_SRCR_FEC);
+
 	printk("Register I2C bus 2 devices\n");
 	i2c_register_board_info(2, mcf_i2c2_devices,
 		ARRAY_SIZE(mcf_i2c2_devices));
