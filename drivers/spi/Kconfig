@@ -619,6 +619,14 @@ config SPI_FSL_DSPI
 	  This enables support for the Freescale DSPI controller in master
 	  mode. VF610, LS1021A and ColdFire platforms uses the controller.
 
+config SPI_FSL_DSPI_SLAVE
+	tristate "Freescale DSPI slave controller"
+	select REGMAP_MMIO
+	depends on M5441x
+	help
+	  This enables support for the Freescale DSPI controller in slave
+	  mode. ColdFire platforms uses the controller.
+
 config SPI_FSL_ESPI
 	tristate "Freescale eSPI controller"
 	depends on FSL_SOC

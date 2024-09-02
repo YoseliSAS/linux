@@ -55,6 +55,7 @@ obj-$(CONFIG_SPI_FALCON)		+= spi-falcon.o
 obj-$(CONFIG_SPI_FSI)			+= spi-fsi.o
 obj-$(CONFIG_SPI_FSL_CPM)		+= spi-fsl-cpm.o
 obj-$(CONFIG_SPI_FSL_DSPI)		+= spi-fsl-dspi.o
+obj-$(CONFIG_SPI_FSL_DSPI_SLAVE)	+= spi-fsl-dspi-slave.o
 obj-$(CONFIG_SPI_FSL_LIB)		+= spi-fsl-lib.o
 obj-$(CONFIG_SPI_FSL_ESPI)		+= spi-fsl-espi.o
 obj-$(CONFIG_SPI_FSL_LPSPI)		+= spi-fsl-lpspi.o
