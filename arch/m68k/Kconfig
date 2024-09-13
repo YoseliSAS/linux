@@ -40,6 +40,7 @@ config M68K
 	select UACCESS_MEMCPY if !MMU
 	select ZONE_DMA
 	select ARCH_SUPPORTS_RT
+	select IRQ_FORCED_THREADING
 
 config CPU_BIG_ENDIAN
 	def_bool y
