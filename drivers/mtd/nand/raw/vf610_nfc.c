@@ -917,7 +917,7 @@ static int vf610_nfc_probe(struct platform_device *pdev)
 
 	init_completion(&nfc->cmd_done);
 
-	err = devm_request_irq(nfc->dev, irq, vf610_nfc_irq, 0, DRV_NAME, nfc);
+	err = devm_request_irq(nfc->dev, irq, vf610_nfc_irq, IRQF_NO_THREAD, DRV_NAME, nfc);
 	if (err) {
 		dev_err(nfc->dev, "Error requesting IRQ!\n");
 		return err;
