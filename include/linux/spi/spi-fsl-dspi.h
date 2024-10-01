@@ -21,4 +21,14 @@ struct fsl_dspi_platform_data {
 	u32 bits_per_word;
 };
 
+
+struct coldfire_spi_slave {
+        u16 bus_num;
+        u16 num_chipselect;
+        u8  irq_source;
+        u32 irq_vector;
+        u32 irq_mask;
+        u8  irq_lp;
+};
+
 #endif /* SPI_FSL_DSPI_HEADER_H */
