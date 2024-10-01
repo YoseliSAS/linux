@@ -1376,7 +1376,7 @@ static int dspi_probe(struct platform_device *pdev)
 		}
 	}
 
-	dspi->clk = devm_clk_get_enabled(&pdev->dev, "dspi");
+	dspi->clk = devm_clk_get_optional_enabled(&pdev->dev, "dspi");
 	if (IS_ERR(dspi->clk)) {
 		ret = PTR_ERR(dspi->clk);
 		dev_err(&pdev->dev, "unable to get clock\n");
@@ -1414,9 +1414,12 @@ poll_mode:
 		}
 	}
 
+#ifndef CONFIG_M5441x
 	ctlr->max_speed_hz =
 		clk_get_rate(dspi->clk) / dspi->devtype_data->max_clock_factor;
-
+#else
+	ctlr->max_speed_hz = 50000000;
+#endif
 	if (dspi->devtype_data->trans_mode != DSPI_DMA_MODE)
 		ctlr->ptp_sts_supported = true;
 

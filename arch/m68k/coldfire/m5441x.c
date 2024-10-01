@@ -144,6 +144,7 @@ static struct clk * const enable_clks[] __initconst = {
 	/* make sure these clocks are enabled */
 	&__clk_0_8, /* flexcan.0 */
 	&__clk_0_9, /* flexcan.1 */
+	&__clk_0_23, /* dspi.0 */
 	&__clk_0_15, /* dspi.1 */
 	&__clk_0_17, /* eDMA */
 	&__clk_0_18, /* intc0 */
@@ -170,7 +171,6 @@ static struct clk * const enable_clks[] __initconst = {
 static struct clk * const disable_clks[] __initconst = {
 	&__clk_0_14, /* i2c.1 */
 	&__clk_0_22, /* i2c.0 */
-	&__clk_0_23, /* dspi.0 */
 	&__clk_0_25, /* uart1 */
 	&__clk_0_26, /* uart2 */
 	&__clk_0_27, /* uart3 */
