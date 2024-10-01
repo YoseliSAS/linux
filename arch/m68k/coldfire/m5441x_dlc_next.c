@@ -119,12 +119,95 @@ static struct i2c_board_info mcf_i2c2_devices[] = {
 	},
 };
 
+/* SPI controller data, SPI (0) */
+static struct fsl_dspi_platform_data dspi_spi0_info = {
+	.cs_num = 4,
+	.bus_num = 0,
+	.sck_cs_delay = 100,
+	.cs_sck_delay = 100,
+};
+
+static struct resource dspi_spi0_resource[] = {
+	[0] = {
+		.start = MCFDSPI_BASE0,
+		.end   = MCFDSPI_BASE0 + 0xFF,
+		.flags = IORESOURCE_MEM,
+		},
+	[1] = {
+		.start = MCF_IRQ_DSPI0,
+		.end   = MCF_IRQ_DSPI0,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+static u64 dlc_next_dspi_mask = DMA_BIT_MASK(32);
+
+/* SPI controller, id = bus number */
+static struct platform_device dspi_spi0_device = {
+	.name = "fsl-dspi",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(dspi_spi0_resource),
+	.resource = dspi_spi0_resource,
+	.dev = {
+		.platform_data = &dspi_spi0_info,
+		.dma_mask = &dlc_next_dspi_mask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
+};
+
 static struct platform_device *dlc_next_devices[] __initdata = {
 	&nfc_device,
+	&dspi_spi0_device,
 };
+
+#define MCFGPIO_PAR_DSPIO_SCK_MASK		(0xF3)
+#define MCFGPIO_PAR_DSPIO_SCK_DSPI0SCK		(0x0C)
+#define MCFGPIO_PAR_DSPIO_SOUT_MASK		(0xCF)
+#define MCFGPIO_PAR_DSPIO_SOUT_DSPI0SOUT	(0x30)
+#define MCFGPIO_PAR_DSPIO_SIN_MASK		(0x3F)
+#define MCFGPIO_PAR_DSPIO_SIN_DSPI0SIN		(0xC0)
+#define MCFGPIO_PAR_DSPIO_PCS0_MASK		(0xFC)
+#define MCFGPIO_PAR_DSPIO_PCS0_DSPI0PCS0	(0x03)
 
 static int __init init_m5441x_dlc_next(void)
 {
+	/* Configure DSPI0 */
+	/*MCFGPIO_PAR_DSPI0WH =
+		(MCFGPIO_PAR_DSPI0WH & MCFGPIO_PAR_DSPI0_SCK_MASK) |
+		MCFGPIO_PAR_DSPI0_SCK_DSPI0SCK;*/
+	u8 dspi0wh = __raw_readb(MCFGPIO_PAR_DSPIOWH);
+	dspi0wh &= MCFGPIO_PAR_DSPIO_SCK_MASK;
+	dspi0wh |= MCFGPIO_PAR_DSPIO_SCK_DSPI0SCK;
+	__raw_writeb(dspi0wh, MCFGPIO_PAR_DSPIOWH);
+
+	/* MCFGPIO_PAR_DSPI0WH =
+		(MCFGPIO_PAR_DSPI0WH & MCFGPIO_PAR_DSPI0_SOUT_MASK) |
+		MCFGPIO_PAR_DSPI0_SOUT_DSPI0SOUT;*/
+	dspi0wh = __raw_readb(MCFGPIO_PAR_DSPIOWH);
+	dspi0wh &= MCFGPIO_PAR_DSPIO_SOUT_MASK;
+	dspi0wh |= MCFGPIO_PAR_DSPIO_SOUT_DSPI0SOUT;
+	__raw_writeb(dspi0wh, MCFGPIO_PAR_DSPIOWH);
+
+	/*MCFGPIO_PAR_DSPI0WH =
+		(MCFGPIO_PAR_DSPI0WH & MCFGPIO_PAR_DSPI0_SIN_MASK) |
+		MCFGPIO_PAR_DSPI0_SIN_DSPI0SIN;*/
+	dspi0wh = __raw_readb(MCFGPIO_PAR_DSPIOWH);
+	dspi0wh &= MCFGPIO_PAR_DSPIO_SIN_MASK;
+	dspi0wh |= MCFGPIO_PAR_DSPIO_SIN_DSPI0SIN;
+	__raw_writeb(dspi0wh, MCFGPIO_PAR_DSPIOWH);
+
+	/*MCFGPIO_PAR_DSPI0WH =
+		(MCFGPIO_PAR_DSPI0WH & MCFGPIO_PAR_DSPI0_PCS0_MASK) |
+		MCFGPIO_PAR_DSPI0_PCS0_DSPI0PCS0;*/
+    /* Set DSPI0_PCS1 (PC0 /FLASH_SPI_WP) as GPIO */
+	dspi0wh = __raw_readb(MCFGPIO_PAR_DSPIOWH);
+	dspi0wh &= MCFGPIO_PAR_DSPIO_PCS0_MASK;
+	dspi0wh |= MCFGPIO_PAR_DSPIO_PCS0_DSPI0PCS0;
+	__raw_writeb(dspi0wh, MCFGPIO_PAR_DSPIOWH);
+
+	/* MCFGPIO_PAR_DSPI0WL = 0x00; */
+	__raw_writeb(0x00, MCFGPIO_PAR_DSPIOWL);
+
 	/* Board gpio setup */
 	platform_add_devices(dlc_next_devices, ARRAY_SIZE(dlc_next_devices));
 

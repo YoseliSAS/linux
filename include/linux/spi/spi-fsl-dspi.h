@@ -18,6 +18,7 @@ struct fsl_dspi_platform_data {
 	u32 bus_num;
 	u32 sck_cs_delay;
 	u32 cs_sck_delay;
+	u32 bits_per_word;
 };
 
 #endif /* SPI_FSL_DSPI_HEADER_H */
