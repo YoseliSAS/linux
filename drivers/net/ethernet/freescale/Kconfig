@@ -35,6 +35,22 @@ config FEC
 	  Say Y here if you want to use the built-in 10/100 Fast ethernet
 	  controller on some Motorola ColdFire and Freescale i.MX/S32 processors.
 
+config MODELO_SWITCH
+	bool "ethernet switch controller (of ColdFire CPUs)"
+	depends on !FEC && M5441X
+	help
+	  Say Y here if you want to use the built-in ethernet switch
+	  controller on some ColdFire processors.
+	  The Integrated Ethernet switch engine is compatible with
+	  10/100 MAC-NET core.
+
+config FEC_RMII_MDIO_FOR_EACH_PHY
+	bool "The RMII0_MDIO/MDC are used to drive PHY of eth0 and the RMII1_MDIO/MDC are used to drive PHY of eth1"
+	depends on FEC && FEC2 && (M5441X)
+	help
+	  Say Y here if you hardware have two RMMIIx_MDIO bus to drive each PHY.
+	  This is the case of DLC_NEXT board and not for DLC2_NG
+
 config FEC_MPC52xx
 	tristate "FEC MPC52xx driver"
 	depends on PPC_MPC52xx && PPC_BESTCOMM

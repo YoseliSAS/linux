@@ -2427,8 +2427,10 @@ static int fec_enet_mii_probe(struct net_device *ndev)
 		for (phy_id = 0; (phy_id < PHY_MAX_ADDR); phy_id++) {
 			if (!mdiobus_is_registered_device(fep->mii_bus, phy_id))
 				continue;
+#ifndef CONFIG_FEC_RMII_MDIO_FOR_EACH_PHY
 			if (dev_id--)
 				continue;
+#endif
 			strscpy(mdio_bus_id, fep->mii_bus->id, MII_BUS_ID_SIZE);
 			break;
 		}
@@ -2475,7 +2477,9 @@ static int fec_enet_mii_probe(struct net_device *ndev)
 
 static int fec_enet_mii_init(struct platform_device *pdev)
 {
+#ifndef CONFIG_FEC_RMII_MDIO_FOR_EACH_PHY
 	static struct mii_bus *fec0_mii_bus;
+#endif
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct fec_enet_private *fep = netdev_priv(ndev);
 	bool suppress_preamble = false;
@@ -2486,6 +2490,7 @@ static int fec_enet_mii_init(struct platform_device *pdev)
 	u32 bus_freq;
 	int addr;
 
+#ifndef CONFIG_FEC_RMII_MDIO_FOR_EACH_PHY
 	/*
 	 * The i.MX28 dual fec interfaces are not equal.
 	 * Here are the differences:
@@ -2511,6 +2516,7 @@ static int fec_enet_mii_init(struct platform_device *pdev)
 		}
 		return -ENOENT;
 	}
+#endif
 
 	bus_freq = 2500000; /* 2.5MHz by default */
 	node = of_get_child_by_name(pdev->dev.of_node, "mdio");
@@ -2607,9 +2613,11 @@ static int fec_enet_mii_init(struct platform_device *pdev)
 
 	mii_cnt++;
 
+#ifndef CONFIG_FEC_RMII_MDIO_FOR_EACH_PHY
 	/* save fec0 mii_bus */
 	if (fep->quirks & FEC_QUIRK_SINGLE_MDIO)
 		fec0_mii_bus = fep->mii_bus;
+#endif
 
 	return 0;
 
