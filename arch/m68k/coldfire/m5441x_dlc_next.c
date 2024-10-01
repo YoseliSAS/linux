@@ -155,9 +155,45 @@ static struct platform_device dspi_spi0_device = {
 	},
 };
 
+/* SPI controller data, SPI (1) as slave */
+static struct fsl_dspi_platform_data dspi_spi1_info = {
+	.cs_num = 4,
+	.bus_num = 1,
+	.sck_cs_delay = 100,
+	.cs_sck_delay = 100,
+	.slave = true,
+};
+
+static struct resource dspi_spi1_resource[] = {
+	[0] = {
+		.start = MCFDSPI_BASE1,
+		.end   = MCFDSPI_BASE1 + 0xFF,
+		.flags = IORESOURCE_MEM,
+		},
+	[1] = {
+		.start = MCF_IRQ_DSPI1,
+		.end   = MCF_IRQ_DSPI1,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+/* SPI controller, id = bus number */
+static struct platform_device dspi_spi1_device = {
+	.name = "fsl-dspi",
+	.id = 1,
+	.num_resources = ARRAY_SIZE(dspi_spi1_resource),
+	.resource = dspi_spi1_resource,
+	.dev = {
+		.platform_data = &dspi_spi1_info,
+		.dma_mask = &dlc_next_dspi_mask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
+};
+
 static struct platform_device *dlc_next_devices[] __initdata = {
 	&nfc_device,
 	&dspi_spi0_device,
+	&dspi_spi1_device,
 };
 
 #define MCFGPIO_PAR_DSPIO_SCK_MASK		(0xF3)
