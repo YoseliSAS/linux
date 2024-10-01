@@ -10,6 +10,7 @@ obj-$(CONFIG_FEC_MPC52xx) += fec_mpc52xx.o
 ifeq ($(CONFIG_FEC_MPC52xx_MDIO),y)
 	obj-$(CONFIG_FEC_MPC52xx) += fec_mpc52xx_phy.o
 endif
+obj-$(CONFIG_MODELO_SWITCH) += modelo_switch.o
 obj-$(CONFIG_FS_ENET) += fs_enet/
 obj-$(CONFIG_FSL_PQ_MDIO) += fsl_pq_mdio.o
 obj-$(CONFIG_FSL_XGMAC_MDIO) += xgmac_mdio.o
