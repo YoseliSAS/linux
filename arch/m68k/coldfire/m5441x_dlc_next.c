@@ -20,6 +20,15 @@
 #define	MCFGPIO_PAR_FBCTL_TA_MASK	0xFC
 #define MCFGPIO_PAR_FBCTL_TA_NFC_RB	0x01
 
+#define MCFGPIO_SRCR_IRQ0	0xec09406a
+#define MCFGPIO_SRCR_SDHC	0xec09406e
+
+/* ethernet mac addresses from uboot */
+unsigned char uboot_enet0[6] = {0};
+EXPORT_SYMBOL(uboot_enet0);
+unsigned char uboot_enet1[6] = {0};
+EXPORT_SYMBOL(uboot_enet1);
+
 static struct mtd_partition dlc_next_nor_partitions[] = {
 	{
 		.name = "w25q01",
@@ -155,9 +164,98 @@ static struct platform_device dspi_spi0_device = {
 	},
 };
 
+#if 0
+/* SPI controller data, SPI (1) as slave */
+static struct fsl_dspi_platform_data dspi_spi1_info = {
+	.cs_num = 4,
+	.bus_num = 1,
+	.sck_cs_delay = 100,
+	.cs_sck_delay = 100,
+	.slave = true,
+};
+
+static struct resource dspi_spi1_resource[] = {
+	[0] = {
+		.start = MCFDSPI_BASE1,
+		.end   = MCFDSPI_BASE1 + 0xFF,
+		.flags = IORESOURCE_MEM,
+		},
+	[1] = {
+		.start = MCF_IRQ_DSPI1,
+		.end   = MCF_IRQ_DSPI1,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+/* SPI controller, id = bus number */
+static struct platform_device dspi_spi1_device = {
+	.name = "fsl-dspi",
+	.id = 1,
+	.num_resources = ARRAY_SIZE(dspi_spi1_resource),
+	.resource = dspi_spi1_resource,
+	.dev = {
+		.platform_data = &dspi_spi1_info,
+		.dma_mask = &dlc_next_dspi_mask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
+};
+#else
+static struct coldfire_spi_slave spi1_slave_info = {
+	.bus_num = 1,
+	.irq_source = MCFINT1_DSPI1,
+	.irq_vector = MCFINT1_VECBASE + MCFINT1_DSPI1,
+	.irq_mask = (1 << (MCFINT1_DSPI1 - 32)),
+	.irq_lp = 0x2,		/* irq level */
+};
+
+#define MCF_INTC1_ICR54         0xfc04c076
+#define MCF_INTC1_IMRH          0xfc04c008
+
+static struct resource coldfire_spi1_resources[] = {
+	[0] = {
+		.name = "spi-slave-par",
+		.start = MCFGPIO_PAR_SDHCH,	/* PAR_ESDHCH */
+		.end = MCFGPIO_PAR_SDHCL,	/* PAR_ESDHCL */
+		.flags = IORESOURCE_MEM
+	},
+
+	[1] = {
+		.name = "spi-slave-module",
+		.start = MCFDSPI_BASE1,	/* DSPI MCR Base */
+		.end = MCFDSPI_BASE1 + 0xc0,	/* DSPI mem map end */
+		.flags = IORESOURCE_MEM
+	},
+
+	[2] = {
+		.name = "spi-slave-int-level",
+		.start = MCF_INTC1_ICR54,	/* ICR start */
+		.end = MCF_INTC1_ICR54,	/* ICR end */
+		.flags = IORESOURCE_MEM
+	},
+
+	[3] = {
+		.name = "spi-slave-int-mask",
+		.start = MCF_INTC1_IMRH,	/* IMRL */
+		.end = MCF_INTC1_IMRH,	/* IMRL */
+		.flags = IORESOURCE_MEM
+	}
+};
+
+static struct platform_device dspi_spi1_device = {
+	.name = "mcf-spi-slave",
+	.id = -1,
+	.resource = coldfire_spi1_resources,
+	.num_resources = ARRAY_SIZE(coldfire_spi1_resources),
+	.dev = {
+		.platform_data = &spi1_slave_info,
+	}
+};
+#endif
+
 static struct platform_device *dlc_next_devices[] __initdata = {
 	&nfc_device,
 	&dspi_spi0_device,
+	&dspi_spi1_device,
 };
 
 #define MCFGPIO_PAR_DSPIO_SCK_MASK		(0xF3)
@@ -207,6 +305,18 @@ static int __init init_m5441x_dlc_next(void)
 
 	/* MCFGPIO_PAR_DSPI0WL = 0x00; */
 	__raw_writeb(0x00, MCFGPIO_PAR_DSPIOWL);
+
+	/* DSPI1 configuration */
+	/* MCF_PM_PPMCR0 = 0xf; */
+	/* MCF_GPIO_PAR_ESDHCH = 0x55; */
+	/* MCF_GPIO_PAR_ESDHCL = 0x05; */
+	/* MCF_GPIO_SRCR_IRQ0 = 3; */
+	/* MCF_GPIO_SRCR_SDHC = 3; */
+	__raw_writeb(0xf, MCFPM_PPMCR0);
+	__raw_writeb(0x55, MCFGPIO_PAR_SDHCH);
+	__raw_writeb(0x05, MCFGPIO_PAR_SDHCL);
+	__raw_writeb(3, MCFGPIO_SRCR_IRQ0);
+	__raw_writeb(3, MCFGPIO_SRCR_SDHC);
 
 	/* Board gpio setup */
 	platform_add_devices(dlc_next_devices, ARRAY_SIZE(dlc_next_devices));
