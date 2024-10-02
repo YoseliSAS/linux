@@ -152,4 +152,21 @@ int fsl_deep_sleep(void);
 static inline int fsl_deep_sleep(void) { return 0; }
 #endif
 
+struct net_device;
+struct coldfire_switch_platform_data {
+	int     hash_table;
+	unsigned int *switch_hw;
+	void    (*request_intrs)(struct net_device *dev,
+		irqreturn_t (*)(int, void *),
+		void *irq_privatedata);
+	void    (*set_mii)(struct net_device *dev);
+	void    (*get_mac)(struct net_device *dev);
+	void    (*enable_phy_intr)(void);
+	void    (*disable_phy_intr)(void);
+	void    (*phy_ack_intr)(void);
+	void    (*localhw_setup)(void);
+	void    (*uncache)(unsigned long addr);
+	void    (*platform_flush_cache)(void);
+};
+
 #endif /* _FSL_DEVICE_H_ */
