@@ -18,6 +18,12 @@ struct fsl_dspi_platform_data {
 	u32 bus_num;
 	u32 sck_cs_delay;
 	u32 cs_sck_delay;
+	union {
+		/* Flag indicating this is an SPI slave controller */
+		bool			slave;
+		/* Flag indicating this is an SPI target controller */
+		bool			target;
+	};
 };
 
 #endif /* SPI_FSL_DSPI_HEADER_H */

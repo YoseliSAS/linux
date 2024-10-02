@@ -1308,6 +1308,7 @@ static int dspi_probe(struct platform_device *pdev)
 		/* Only Coldfire uses platform data */
 		dspi->devtype_data = &devtype_data[MCF5441X];
 		big_endian = true;
+		ctlr->slave = pdata->slave;
 	} else {
 
 		ret = of_property_read_u32(np, "spi-num-chipselects", &cs_num);
