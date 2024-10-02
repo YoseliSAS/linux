@@ -45,5 +45,7 @@ obj-$(CONFIG_DLC_NEXT)	+= m5441x_dlc_next.o
 
 obj-$(CONFIG_PCI)	+= pci.o
 
+obj-$(CONFIG_MODELO_SWITCH) += l2switch.o
+
 obj-y			+= gpio.o
 obj-y			+= head.o
