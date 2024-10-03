@@ -5,15 +5,6 @@
  * Local Data Structures
  */
 
-struct coldfire_spi_slave {
-        u16 bus_num;
-        u16 num_chipselect;
-        u8  irq_source;
-        u32 irq_vector;
-        u32 irq_mask;
-        u8  irq_lp;
-};
-
 struct DSPI_MCR {
 	unsigned master:1;
 	unsigned cont_scke:1;

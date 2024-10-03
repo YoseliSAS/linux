@@ -155,7 +155,7 @@ static struct platform_device dspi_spi0_device = {
 	},
 };
 
-#ifndef CONFIG_FSL_DSPI_SLAVE
+#if 0
 /* SPI controller data, SPI (1) as slave */
 static struct fsl_dspi_platform_data dspi_spi1_info = {
 	.cs_num = 4,
@@ -193,38 +193,41 @@ static struct platform_device dspi_spi1_device = {
 #else
 static struct coldfire_spi_slave spi1_slave_info = {
 	.bus_num = 1,
-	.irq_source = M5441X_DSPI1_IRQ_SOURCE,
-	.irq_vector = M5441X_DSPI1_IRQ_VECTOR,
-	.irq_mask = (1 << (M5441X_DSPI1_IRQ_SOURCE - 32)),
+	.irq_source = MCFINT1_DSPI1,
+	.irq_vector = MCFINT1_VECBASE,
+	.irq_mask = (1 << (MCFINT1_DSPI1 - 32)),
 	.irq_lp = 0x2,		/* irq level */
 };
+
+#define MCF_INTC1_ICR54         0xfc04c076
+#define MCF_INTC1_IMRH          0xfc04c008
 
 static struct resource coldfire_spi1_resources[] = {
 	[0] = {
 		.name = "spi-slave-par",
-		.start = (u32)&MCF_GPIO_PAR_ESDHCH,	/* PAR_ESDHCH */
-		.end = (u32)&MCF_GPIO_PAR_ESDHCL,	/* PAR_ESDHCL */
+		.start = MCFGPIO_PAR_SDHCH,	/* PAR_ESDHCH */
+		.end = MCFGPIO_PAR_SDHCL,	/* PAR_ESDHCL */
 		.flags = IORESOURCE_MEM
 	},
 
 	[1] = {
 		.name = "spi-slave-module",
-		.start = M5441X_DSPI1_MCR,	/* DSPI MCR Base */
-		.end = M5441X_DSPI1_MCR + 0xc0,	/* DSPI mem map end */
+		.start = MCFDSPI_BASE1,	/* DSPI MCR Base */
+		.end = MCFDSPI_BASE1 + 0xc0,	/* DSPI mem map end */
 		.flags = IORESOURCE_MEM
 	},
 
 	[2] = {
 		.name = "spi-slave-int-level",
-		.start = (u32)&MCF_INTC1_ICR54,	/* ICR start */
-		.end = (u32)&MCF_INTC1_ICR54,	/* ICR end */
+		.start = MCF_INTC1_ICR54,	/* ICR start */
+		.end = MCF_INTC1_ICR54,	/* ICR end */
 		.flags = IORESOURCE_MEM
 	},
 
 	[3] = {
 		.name = "spi-slave-int-mask",
-		.start = (u32)&MCF_INTC1_IMRH,	/* IMRL */
-		.end = (u32)&MCF_INTC1_IMRH,	/* IMRL */
+		.start = MCF_INTC1_IMRH,	/* IMRL */
+		.end = MCF_INTC1_IMRH,	/* IMRL */
 		.flags = IORESOURCE_MEM
 	}
 };

@@ -56,6 +56,7 @@
 #if defined(CONFIG_M5441x)
 #include <asm/mcf5441x_dspi.h>
 #include <asm/mcf5441x_gpio.h>
+#include <linux/spi/spi-fsl-dspi.h>
 #include "spi-fsl-dspi-slave.h"
 #endif
 
