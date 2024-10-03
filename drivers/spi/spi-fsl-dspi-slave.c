@@ -53,9 +53,10 @@
 
 #include <linux/time.h>
 
-#if defined(CONFIG_M5441X)
+#if defined(CONFIG_M5441x)
 #include <asm/mcf5441x_dspi.h>
 #include <asm/mcf5441x_gpio.h>
+#include "spi-fsl-dspi-slave.h"
 #endif
 
 #define CLASS_NAME "dspi_slave"
@@ -75,97 +76,6 @@
 //#define DSPI_SLAVE_HARDIRQ_HANDLER
 
 /****************************************************************************/
-
-/*
- * Local Data Structures
- */
-
-struct DSPI_MCR {
-	unsigned master:1;
-	unsigned cont_scke:1;
-	unsigned dconf:2;
-	unsigned frz:1;
-	unsigned mtfe:1;
-	unsigned pcsse:1;
-	unsigned rooe:1;
-	unsigned pcsis:8;
-	unsigned reserved15:1;
-	unsigned mdis:1;
-	unsigned dis_tx:1;
-	unsigned dis_rxf:1;
-	unsigned clr_tx:1;
-	unsigned clr_rxf:1;
-	unsigned smpl_pt:2;
-	unsigned reserved71:7;
-	unsigned halt:1;
-};
-
-struct DSPI_CTAR {
-	unsigned dbr:1;
-	unsigned fmsz:4;
-	unsigned cpol:1;
-	unsigned cpha:1;
-	unsigned lsbfe:1;
-	unsigned pcssck:2;
-	unsigned pasc:2;
-	unsigned pdt:2;
-	unsigned pbr:2;
-	unsigned cssck:4;
-	unsigned asc:4;
-	unsigned dt:4;
-	unsigned br:4;
-};
-
-struct chip_data {
-	/* dspi data */
-	union {
-		u32 mcr_val;
-		struct DSPI_MCR mcr;
-	};
-	union {
-		u32 ctar_val;
-		struct DSPI_CTAR ctar;
-	};
-};
-
-
-struct driver_data {
-	/* Driver model hookup */
-	struct platform_device *pdev;
-
-	/* Statistics */
-	unsigned long long stat_spi_nbbytes_recv;
-	unsigned long long stat_spi_nbbytes_sent;
-	unsigned long long stat_rx_hwfifo_overflow;
-	unsigned long long stat_rx_kfifo_overflow;
-	unsigned long long stat_tx_hwfifo_underflow;
-
-	/* ProcFS */
-	struct proc_dir_entry *procfs_direntry;
-
-	/* Device variables */
-	int chrdev_major;
-	struct class *chrdev_class;
-	struct device *chrdev;
-	struct siginfo sinfo;
-	struct task_struct *task_user;
-
-	/* Current message transfer state info */
-	struct chip_data *cur_chip;
-	u8 cs;
-
-	volatile u32 *mcr;		/* DSPI MCR register */
-	volatile u32 *ctar;		/* DSPI CTAR register */
-	volatile u32 *dspi_dtfr;		/* DSPI DTFR register */
-	volatile u32 *dspi_drfr;		/* DSPI DRFR register */
-	volatile u32 *dspi_rser;		/* DSPI RSER register */
-	volatile u32 *dspi_sr;		/* DSPI status register */
-
-	u8  *int_icr;	   /* Interrupt level and priority register */
-	u32 *int_mr;       /* Interrupt mask register */
-
-	u8 stream_restarted; /* Boolean to unblock read() during failover */
-};
 
 #define DSPI_CS(cs) ((1<<(cs))<<16)
 
@@ -250,8 +160,10 @@ static inline void kfifo_prepare(void)
 static inline void hwfifo_prepare(struct driver_data *drv_data)
 {
 	/* Set CLR_TXF & CLR_RXF bit : Clear TX & RX fifo */
-	*((volatile u32 *)drv_data->mcr) |=
-		(MCF_DSPI_DMCR_CLRTXF | MCF_DSPI_DMCR_CLRRXF);
+	// *((volatile u32 *)drv_data->mcr) |=
+	// 	(MCF_DSPI_DMCR_CLRTXF | MCF_DSPI_DMCR_CLRRXF);
+	__raw_writel(__raw_readl(drv_data->mcr) |
+		(MCF_DSPI_DMCR_CLRTXF | MCF_DSPI_DMCR_CLRRXF), drv_data->mcr);
 }
 
 static inline int kfifo_tx_kfifo_to_hw(struct driver_data *drv_data)
@@ -281,11 +193,14 @@ static inline void dspi_setup_chip(struct driver_data *drv_data)
 {
 	struct chip_data *chip = drv_data->cur_chip;
 
-	(*(volatile u32 *)drv_data->mcr) = chip->mcr_val;
-	(*(volatile u32 *)(drv_data->ctar+drv_data->cs)) = chip->ctar_val;
+	// (*(volatile u32 *)drv_data->mcr) = chip->mcr_val;
+	// (*(volatile u32 *)(drv_data->ctar+drv_data->cs)) = chip->ctar_val;
+	__raw_writel(chip->mcr_val, drv_data->mcr);
+	__raw_writel(chip->ctar_val, drv_data->ctar + drv_data->cs);
 
-	*drv_data->dspi_rser =
-		(MCF_DSPI_DRSER_RFDFE | MCF_DSPI_DRSER_RFOFE | MCF_DSPI_DRSER_TFUFE);
+	// *drv_data->dspi_rser =
+	// 	(MCF_DSPI_DRSER_RFDFE | MCF_DSPI_DRSER_RFOFE | MCF_DSPI_DRSER_TFUFE);
+	__raw_writel(MCF_DSPI_DRSER_RFDFE | MCF_DSPI_DRSER_RFOFE | MCF_DSPI_DRSER_TFUFE, drv_data->dspi_rser);
 }
 
 /****************************************************************************/
@@ -311,12 +226,8 @@ static volatile int s2tos0_eport_hasdata;
 
 static irqreturn_t s2tos0_eport_handler(int irq, void *dev_id)
 {
-	uint8_t byte;
-
 	/* Acknowledge the IRQ */
-	byte = MCF_EPORT_EPFR;
-	byte = byte & MCF_EPORT_EPFR_EPF4;
-	MCF_EPORT_EPFR =  byte;
+	__raw_writeb(__raw_readb(MCFEPORT_EPFR) & MCFEPORT_EPFR_EPF4, MCFEPORT_EPFR);
 
 	s2tos0_eport_hasdata = 1;
 
@@ -324,18 +235,6 @@ static irqreturn_t s2tos0_eport_handler(int irq, void *dev_id)
 
 	return IRQ_HANDLED;
 }
-
-static struct irqaction s2tos0_eport_irqaction = {
-	.name	 = "s2tos0-eportd",
-#if !defined(DSPI_SLAVE_HARDIRQ_HANDLER)
-	.flags	 = IRQF_DISABLED,
-#else
-	.flags	 = IRQF_DISABLED | IRQF_NO_THREAD,
-#endif
-	.handler = s2tos0_eport_handler,
-	.dev_id	 = NULL, /* set dynamically */
-	.thread  = NULL, /* set dynamically */
-};
 
 #if !defined(DSPI_SLAVE_HARDIRQ_HANDLER) && (defined(CONFIG_PREEMPT_RTB) || defined(CONFIG_PREEMPT_RT_FULL))
 /* This is to enhance IRQ handler priority to RT */
@@ -365,7 +264,6 @@ static ssize_t s2tos0_eport_read(
 {
 	char msg[2];
 	int count;
-	uint8_t byte;
 	unsigned long flags;
 
 	if (length < 1)
@@ -381,17 +279,19 @@ static ssize_t s2tos0_eport_read(
 	local_irq_save(flags);
 
 	/* Pinmux: PAR_IRQ04 -> GPIO (PC4) */
-	byte = MCFGPIO_PAR_IRQ0H;
-	byte = byte & (~0x0c);
-	MCFGPIO_PAR_IRQ0H = byte;
+	// byte = MCFGPIO_PAR_IRQ0H;
+	// byte = byte & (~0x0c);
+	// MCFGPIO_PAR_IRQ0H = byte;
+	__raw_writeb(__raw_readb(MCFGPIO_PAR_IRQ0H) & (~0x0c), MCFGPIO_PAR_IRQ0H);
 
 	/* Read PC4/IRQ04 */
-	msg[0] = (MCFGPIO_PPDSDR_C & 0x10) ? '1' : '0';
+	msg[0] = (__raw_readb(MCFGPIO_PPDSDR_C) & 0x10) ? '1' : '0';
 
 	/* Pinmux: PAR_IRQ04 -> Primary (IRQ) */
-	byte = MCFGPIO_PAR_IRQ0H;
-	byte = byte | 0x0c;
-	MCFGPIO_PAR_IRQ0H = byte;
+	// byte = MCFGPIO_PAR_IRQ0H;
+	// byte = byte | 0x0c;
+	// MCFGPIO_PAR_IRQ0H = byte;
+	__raw_writeb(__raw_readb(MCFGPIO_PAR_IRQ0H) | 0x0c, MCFGPIO_PAR_IRQ0H);
 
 	local_irq_restore(flags);
 
@@ -401,7 +301,10 @@ static ssize_t s2tos0_eport_read(
 	} else
 		count = 1;
 
-	copy_to_user(buffer, msg, count);
+	if (copy_to_user(buffer, msg, count) != 0) {
+		dev_err(s2tos0_eport_device, "Failed to copy data to user space\n");
+		return -EFAULT;
+	}
 
 	return count;
 }
@@ -427,16 +330,30 @@ static int s2tos0_eport_init(struct platform_device *pdev, struct class * klass)
 	__raw_writeb(__raw_readb(MCFGPIO_PDDR_C) & ~(1 << 4), MCFGPIO_PDDR_C);
 
 	/* Generate IRQ4 on rising and falling edges */
-	word = MCF_EPORT_EPPAR;
-	word = word | MCF_EPORT_EPPAR_EPPA4_RISING | MCF_EPORT_EPPAR_EPPA4_FALLING;
-	MCF_EPORT_EPPAR = word;
+	/* word = MCFEPORT_EPPAR;
+	word = word | MCFEPORT_EPPAR_EPPA4_RISING | MCFEPORT_EPPAR_EPPA4_FALLING;
+	MCFEPORT_EPPAR = word;*/
+	__raw_writew(__raw_readw(MCFEPORT_EPPAR) | MCFEPORT_EPPAR_EPPA4_RISING | MCFEPORT_EPPAR_EPPA4_FALLING, MCFEPORT_EPPAR);
 
 	/* Register IRQ4 handler */
-	s2tos0_eport_irqaction.dev_id = 0;
-	retval = setup_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
+// 	static struct irqaction s2tos0_eport_irqaction = {
+// 	.name	 = "s2tos0-eportd",
+// #if !defined(DSPI_SLAVE_HARDIRQ_HANDLER)
+// 	.flags	 = 0,
+// #else
+// 	.flags	 = 0 | IRQF_NO_THREAD,
+// #endif
+// 	.handler = s2tos0_eport_handler,
+// 	.dev_id	 = NULL, /* set dynamically */
+// 	.thread  = NULL, /* set dynamically */
+// };
+// 	s2tos0_eport_irqaction.dev_id = 0;
+// 	retval = setup_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
+
+	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_NO_THREAD, "s2tos0-eportd", NULL);
 	if (retval < 0) {
 		dev_err(&pdev->dev,
-			"Unable to attach EPORT interrupt\n");
+			"Unable to attach EPORT interrupt: %d\n", retval);
 		goto register_irq_failed;
 	}
 
@@ -468,18 +385,20 @@ device_create_failed:
 	unregister_chrdev(s2tos0_eport_major, S2TOS0_EPORT_DEVICE_NAME);
 
 register_chrdev_failed:
-	remove_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
+	//remove_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
+	free_irq(M5441X_EPORT4_IRQ_VECTOR, NULL);
 
 register_irq_failed:
 	return retval;
 }
 
-static void __devexit s2tos0_eport_exit(struct platform_device *pdev)
+static void s2tos0_eport_exit(struct platform_device *pdev)
 {
 	struct driver_data *drv_data = platform_get_drvdata(pdev);
 
 	/* Unregister IRQ4 handler */
-	remove_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
+	//remove_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
+	free_irq(M5441X_EPORT4_IRQ_VECTOR, NULL);
 
 	device_destroy(drv_data->chrdev_class, MKDEV(s2tos0_eport_major, 0));
 	unregister_chrdev(s2tos0_eport_major, S2TOS0_EPORT_DEVICE_NAME);
@@ -629,7 +548,7 @@ static ssize_t chrdev_device_write(struct file *filp,
 	return status ? status : nb_bytes;
 }
 
-static int chrdev_device_fsync (struct file *filp, int datasync)
+static int chrdev_device_fsync (struct file *filp, loff_t start, loff_t end, int datasync)
 {
 	chrdev_drvdata->cur_chip->mcr.halt = 1;
 	dspi_setup_chip(chrdev_drvdata);
@@ -655,7 +574,7 @@ static struct file_operations chrdev_fops = {
 };
 
 /****************************************************************************/
-
+#if 0
 /*
  * procfs related callback
  */
@@ -682,7 +601,6 @@ static int procfs_read_stat(
 		return 0;
 	}
 }
-
 static int procfs_write_reset_stat(struct file *file,
 					const char *buffer,
 					unsigned long count,
@@ -744,7 +662,7 @@ static int procfs_write_sync_s0tos2(struct file *file,
 
 	return count;
 }
-
+#endif
 /****************************************************************************/
 
 /*
@@ -802,11 +720,13 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 		while (*((volatile u32 *)drv_data->dspi_sr) & MCF_DSPI_DSR_RFDF) {
 
 			/* We pop one element from the hardware RX FIFO */
-			in_data = MCF_DSPI_DRFR_RXDATA(*drv_data->dspi_drfr);
+			//in_data = MCF_DSPI_DRFR_RXDATA(*drv_data->dspi_drfr);
+			in_data = __raw_readw(drv_data->dspi_drfr);
 
 			/* RFDF must be cleared only after the DSPI_POPR
 			 * register is read. */
-			*((volatile u32 *)drv_data->dspi_sr) |= MCF_DSPI_DSR_RFDF;
+			//*((volatile u32 *)drv_data->dspi_sr) |= MCF_DSPI_DSR_RFDF;
+			__raw_writew(__raw_readb(drv_data->dspi_sr) | MCF_DSPI_DSR_RFDF, drv_data->dspi_sr);
 
 			/* Increment stat incoming bytes counter */
 			drv_data->stat_spi_nbbytes_recv += 2;
@@ -914,23 +834,18 @@ static int setup(struct driver_data *drv_data)
 static int coldfire_spi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct spi_controller *ctlr;
+	struct coldfire_spi_slave *platform_info;
 	struct driver_data *drv_data = 0;
 	struct resource *memory_resource;
 	struct proc_dir_entry *procfs_entry;
 	int irq;
 	int status = 0;
-
-	drv_data = devm_kzalloc(&pdev->dev, sizeof(*driver_data), GFP_KERNEL);
+	
+	platform_info = (struct coldfire_spi_slave *)dev->platform_data;
+	
+	drv_data = kzalloc(sizeof(struct driver_data), GFP_KERNEL);
 	if (!drv_data)
 		return -ENOMEM;
-
-	ctlr = spi_alloc_slave(&pdev->dev, 0);
-	if (!ctlr)
-		return -ENOMEM;
-
-	spi_controller_set_devdata(ctlr, dspi);
-	platform_set_drvdata(pdev, dspi);
 
 	/* Initialize mutex and kfifo here */
 	mutex_init(&chrdev_client_mutex);
@@ -951,12 +866,12 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	}
 
 	drv_data->pdev = pdev;
-	drv_data->mcr = (volatile u32 *)&MCF_DSPI1_DMCR;
-	drv_data->ctar = (volatile u32 *)&MCF_DSPI1_DCTAR0;
-	drv_data->dspi_sr = (volatile u32 *)&MCF_DSPI1_DSR;
-	drv_data->dspi_rser = (volatile u32 *)&MCF_DSPI1_DRSER;
-	drv_data->dspi_dtfr = (volatile u32 *)&MCF_DSPI1_DTFR;
-	drv_data->dspi_drfr = (volatile u32 *)&MCF_DSPI1_DRFR;
+	drv_data->mcr = MCF_DSPI1_DMCR;
+	drv_data->ctar = MCF_DSPI1_DCTAR0;
+	drv_data->dspi_sr = MCF_DSPI1_DSR;
+	drv_data->dspi_rser = MCF_DSPI1_DRSER;
+	drv_data->dspi_dtfr = MCF_DSPI1_DTFR;
+	drv_data->dspi_drfr = MCF_DSPI1_DRFR;
 
 	memory_resource = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 						       "spi-slave-par");
@@ -992,8 +907,25 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	/*
 	 * Register IRQ handler
 	 */
+	    //     irq = platform_info->irq_vector;
+
+        // dspi_irqaction.dev_id = drv_data;
+        // status = setup_irq(platform_info->irq_vector, &dspi_irqaction);
+        // if (status < 0) {
+        //         dev_err(&pdev->dev,
+        //                 "Unable to attach ColdFire DSPI interrupt\n");
+        //         goto out_error_after_drv_data_alloc;
+        // }
+
+        // *drv_data->int_icr = platform_info->irq_lp;
+        // *drv_data->int_mr &= ~platform_info->irq_mask;
+        // drv_data->stream_restarted = false;
+
+        // /* Chip select is always PCS0 in slave mode */
+        // drv_data->cs = 0;
+
 	irq = platform_info->irq_vector;
-	status = request_irq(irq, dspi_interrupt, IRQF_SHARED, "kdspi-slave_irqd", drv_data);
+	status = request_irq(irq, dspi_interrupt, 0, "dspi-slave", drv_data);
 	if (status < 0) {
     	dev_err(&pdev->dev, "Unable to attach ColdFire DSPI interrupt\n");
     	goto out_error_after_drv_data_alloc;
@@ -1098,7 +1030,7 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	}
 
 	/* We create a new "virtual" device class. */
-	drv_data->chrdev_class = class_create(THIS_MODULE, CLASS_NAME);
+	drv_data->chrdev_class = class_create(CLASS_NAME);
 	if (IS_ERR(drv_data->chrdev_class)) {
 		dev_err(&pdev->dev, "failed to register device class '%s'\n", CLASS_NAME);
 		status = PTR_ERR(drv_data->chrdev_class);
@@ -1136,7 +1068,8 @@ out_error_classreg:
 	kfree(drv_data->cur_chip);
 
 out_error_irq_alloc:
-	remove_irq(platform_info->irq_vector, &dspi_irqaction);
+	//remove_irq(platform_info->irq_vector, &dspi_irqaction);
+	free_irq(platform_info->irq_vector, drv_data);
 
 out_error_after_drv_data_alloc:
 	kfree(drv_data);
@@ -1144,14 +1077,14 @@ out_error_after_drv_data_alloc:
 	return status;
 }
 
-static int coldfire_spi_remove(struct platform_device *pdev)
+static void coldfire_spi_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct driver_data *drv_data = platform_get_drvdata(pdev);
 	struct coldfire_spi_slave *platform_info;
 
 	if (!drv_data)
-		return 0;
+		return;
 
 	platform_info = (struct coldfire_spi_slave *)dev->platform_data;
 
@@ -1167,7 +1100,8 @@ static int coldfire_spi_remove(struct platform_device *pdev)
 	unregister_chrdev(drv_data->chrdev_major, DEVICE_NAME);
 
 	/* Release IRQ */
-	remove_irq(platform_info->irq_vector, &dspi_irqaction);
+	//remove_irq(platform_info->irq_vector, &dspi_irqaction);
+	free_irq(platform_info->irq_vector, drv_data);
 
 	/* Remove ProcFS entries */
 	remove_proc_entry("sync_s2tos0", drv_data->procfs_direntry);
@@ -1188,16 +1122,11 @@ static int coldfire_spi_remove(struct platform_device *pdev)
 	platform_set_drvdata(pdev, NULL);
 
 	printk(KERN_INFO "DSPI: Coldfire slave unloaded (DSPI%d)\n", platform_info->bus_num);
-
-	return 0;
 }
 
 static void coldfire_spi_shutdown(struct platform_device *pdev)
 {
-	int status = coldfire_spi_remove(pdev);
-
-	if (status != 0)
-		dev_err(&pdev->dev, "shutdown failed with %d\n", status);
+	coldfire_spi_remove(pdev);
 }
 
 /* CONFIG_PM is not handled whatever the power management policy */
