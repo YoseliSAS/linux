@@ -32,6 +32,7 @@
  * Includes
  */
 
+#include <linux/debugfs.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/device.h>
@@ -664,6 +665,33 @@ static int procfs_write_sync_s0tos2(struct file *file,
 	return count;
 }
 #endif
+
+static ssize_t debugfs_write_sync_s0tos2(struct file *file,
+					const char *buffer,
+					size_t count,
+					loff_t *data)
+{
+	/* Allowed strings are "0\n" and "1\n" */
+	if (count != 2) {
+		return -EINVAL;
+	}
+
+	switch (buffer[0]) {
+	case '0':
+		sync_s0tos2_set(0);
+		/* printk(KERN_DEBUG "DSPI: sync_s0tos2 = 0\n"); */
+		break;
+	case '1':
+		sync_s0tos2_set(1);
+		/* printk(KERN_DEBUG "DSPI: sync_s0tos2 = 1\n"); */
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return count;
+}
+
 /****************************************************************************/
 
 /*
@@ -828,6 +856,10 @@ static int setup(struct driver_data *drv_data)
 
 /****************************************************************************/
 
+static const struct file_operations debugfs_sync_s0tos2_fops = {
+	.write = debugfs_write_sync_s0tos2,
+};
+
 /*
  * Generic Device driver routines and interface implementation
  */
@@ -838,7 +870,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	struct coldfire_spi_slave *platform_info;
 	struct driver_data *drv_data = 0;
 	struct resource *memory_resource;
-	struct proc_dir_entry *procfs_entry;
 	int irq;
 	int status = 0;
 	
@@ -1006,6 +1037,11 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	}
 #endif
 
+	/* Create a debugfs to drive sync_s0tos2_set() from /sys/kernel/debug/dspi-slave/sync_s0tos2 */
+	drv_data->debugfs_direntry = debugfs_create_dir(CLASS_NAME, NULL);
+	if (!debugfs_create_file("sync_s0tos2", 0200, drv_data->debugfs_direntry, drv_data, &debugfs_sync_s0tos2_fops))
+		dev_warn(&pdev->dev, "Unable to create %s entry\n", "sync_s0tos2");
+
 	/* TODO: Pack this struct in platform_info */
 	drv_data->cur_chip = kzalloc(sizeof(struct chip_data), GFP_KERNEL);
 	if (drv_data->cur_chip == NULL) {
@@ -1104,6 +1140,7 @@ static void coldfire_spi_remove(struct platform_device *pdev)
 	//remove_irq(platform_info->irq_vector, &dspi_irqaction);
 	free_irq(platform_info->irq_vector, drv_data);
 
+#if 0
 	/* Remove ProcFS entries */
 	remove_proc_entry("sync_s2tos0", drv_data->procfs_direntry);
 	remove_proc_entry("sync_s0tos2", drv_data->procfs_direntry);
@@ -1114,6 +1151,9 @@ static void coldfire_spi_remove(struct platform_device *pdev)
 	remove_proc_entry("stat_spi_nbbytes_sent", drv_data->procfs_direntry);
 	remove_proc_entry("stat_spi_nbbytes_recv", drv_data->procfs_direntry);
 	remove_proc_entry("dspi-slave", NULL);
+#endif
+
+	debugfs_remove_recursive(drv_data->debugfs_direntry);
 
 	/* Free allocated memory */
 	kfree(drv_data->cur_chip);

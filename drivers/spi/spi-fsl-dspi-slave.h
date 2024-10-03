@@ -65,8 +65,8 @@ struct driver_data {
 	unsigned long long stat_rx_kfifo_overflow;
 	unsigned long long stat_tx_hwfifo_underflow;
 
-	/* ProcFS */
-	struct proc_dir_entry *procfs_direntry;
+    /* debugfs */
+    struct dentry *debugfs_direntry;
 
 	/* Device variables */
 	int chrdev_major;
