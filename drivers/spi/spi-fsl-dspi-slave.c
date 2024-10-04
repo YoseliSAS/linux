@@ -32,6 +32,7 @@
  * Includes
  */
 
+#include <linux/cdev.h>
 #include <linux/debugfs.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -248,9 +249,16 @@ static const struct sched_param s2tos0_eport_schedparam = {
 /* File operations */
 static int s2tos0_eport_open(struct inode *inode, struct file *filp)
 {
+	int retval = 0;
+	struct cdev *cdev = inode->i_cdev;
+
 	s2tos0_eport_firstread = true;
 
-	return 0;
+	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_NO_THREAD, "s2tos0-eportd", NULL);
+	if (retval < 0)
+		printk(KERN_ERR "Unable to attach EPORT interrupt: %d\n", retval);
+
+	return retval;
 }
 
 static int s2tos0_eport_close(struct inode *inode, struct file *filp)
@@ -351,13 +359,6 @@ static int s2tos0_eport_init(struct platform_device *pdev, struct class * klass)
 // };
 // 	s2tos0_eport_irqaction.dev_id = 0;
 // 	retval = setup_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
-
-	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_NO_THREAD, "s2tos0-eportd", NULL);
-	if (retval < 0) {
-		dev_err(&pdev->dev,
-			"Unable to attach EPORT interrupt: %d\n", retval);
-		goto register_irq_failed;
-	}
 
 	/* Register /dev/s2tos0 char device */
 	s2tos0_eport_major = register_chrdev(0, S2TOS0_EPORT_DEVICE_NAME, &s2tos0_eport_fops);
