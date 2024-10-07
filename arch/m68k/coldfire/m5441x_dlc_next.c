@@ -20,6 +20,12 @@
 #define	MCFGPIO_PAR_FBCTL_TA_MASK	0xFC
 #define MCFGPIO_PAR_FBCTL_TA_NFC_RB	0x01
 
+/* ethernet mac addresses from uboot */
+unsigned char uboot_enet0[6] = {0};
+EXPORT_SYMBOL(uboot_enet0);
+unsigned char uboot_enet1[6] = {0};
+EXPORT_SYMBOL(uboot_enet1);
+
 static struct mtd_partition dlc_next_nor_partitions[] = {
 	{
 		.name = "w25q01",
