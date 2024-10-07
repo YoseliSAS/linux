@@ -698,6 +698,9 @@ struct fec_enet_private {
 		u8 at_inc_corr;
 	} ptp_saved_state;
 
+	/* Hack to store the device number */
+	u32 id;
+
 	u64 ethtool_stats[];
 };
 
