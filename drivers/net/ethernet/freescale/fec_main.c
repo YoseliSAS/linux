@@ -22,6 +22,7 @@
  * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
  */
 
+#include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -216,6 +217,18 @@ MODULE_DEVICE_TABLE(of, fec_dt_ids);
 static unsigned char macaddr[ETH_ALEN];
 module_param_array(macaddr, byte, NULL, 0);
 MODULE_PARM_DESC(macaddr, "FEC Ethernet MAC address");
+
+#ifdef CONFIG_MODELO_SWITCH
+static u8 fec0_enabled;
+static u8 fec1_enabled;
+static struct platform_device *pdev_copy_fec0;
+static struct platform_device *pdev_copy_fec1;
+static struct delayed_work    config_workqueue_fec0;
+static struct delayed_work    config_workqueue_fec1;
+static void eth_switch_enabled_work_fec0(struct work_struct *work);
+static void eth_switch_enabled_work_fec1(struct work_struct *work);
+#define SWE_POLL_TIMING	msecs_to_jiffies(1000)
+#endif
 
 #if defined(CONFIG_M5272)
 /*
@@ -2425,6 +2438,8 @@ static int fec_enet_mii_probe(struct net_device *ndev)
 	int phy_id;
 	int dev_id = fep->dev_id;
 
+	printk(KERN_INFO "Freescale FEC PHY driver, connect [%s] to device id %d\n", fep->mii_bus->id, dev_id);
+
 	if (fep->phy_node) {
 		phy_dev = of_phy_connect(ndev, fep->phy_node,
 					 &fec_enet_adjust_link, 0,
@@ -4317,7 +4332,7 @@ out:
 }
 
 static int
-fec_probe(struct platform_device *pdev)
+fec_probe_finish(struct platform_device *pdev)
 {
 	struct fec_enet_private *fep;
 	struct fec_platform_data *pdata;
@@ -4555,6 +4570,14 @@ fec_probe(struct platform_device *pdev)
 	pm_runtime_mark_last_busy(&pdev->dev);
 	pm_runtime_put_autosuspend(&pdev->dev);
 
+#ifdef CONFIG_MODELO_SWITCH
+	/* Destroy the pointer */
+	if (pdev->id == 0)
+		pdev_copy_fec0 = NULL;
+	else
+		pdev_copy_fec1 = NULL;
+#endif
+
 	return 0;
 
 failed_register:
@@ -4590,6 +4613,66 @@ failed_ioremap:
 	return ret;
 }
 
+#ifdef CONFIG_MODELO_SWITCH
+static void eth_switch_enabled_work_fec0(struct work_struct *work)
+{
+	if (fec0_enabled == 0) {
+		/* Not configured, get back later */
+		schedule_delayed_work(&config_workqueue_fec0, SWE_POLL_TIMING);
+	} else if (fec0_enabled == 1) {
+		printk(KERN_INFO "WQ stopped - finish probing for fec0\n");
+		/* fec0 is enabled, cancel the task and finish probing */
+		fec_probe_finish(pdev_copy_fec0);
+	} else {
+		/* An error occured, just stop there */
+	}
+}
+
+static void eth_switch_enabled_work_fec1(struct work_struct *work)
+{
+	if (fec1_enabled == 0) {
+		/* Not configured, get back later */
+		schedule_delayed_work(&config_workqueue_fec1, SWE_POLL_TIMING);
+	} else if (fec1_enabled == 1) {
+		if ((fec0_enabled == 1) && (pdev_copy_fec0 != NULL)) {
+			/* We have both fec0 and fec1 but fec0 is not probed yet */
+			printk(KERN_INFO "WQ schedule - fec0 is not ready\n");
+			schedule_delayed_work(&config_workqueue_fec1, SWE_POLL_TIMING);
+		} else {
+			printk(KERN_INFO "WQ stopped - finish probing for fec1\n");
+			/* fec1 is enabled, cancel the task and finish probing */
+			fec_probe_finish(pdev_copy_fec1);
+		}
+	} else {
+		/* An error occured, just stop there */
+	}
+}
+#endif
+
+static int fec_probe(struct platform_device *pdev)
+{
+#ifdef CONFIG_MODELO_SWITCH
+	static int dev_id = 0;
+	/* Save the platform reference */
+	if (dev_id == 0) {
+		INIT_DELAYED_WORK(&config_workqueue_fec0, eth_switch_enabled_work_fec0);
+		schedule_delayed_work(&config_workqueue_fec0, SWE_POLL_TIMING);
+		pdev_copy_fec0 = pdev;
+		pdev_copy_fec0->id = 0;
+	} else {
+		INIT_DELAYED_WORK(&config_workqueue_fec1, eth_switch_enabled_work_fec1);
+		schedule_delayed_work(&config_workqueue_fec1, SWE_POLL_TIMING);
+		pdev_copy_fec1 = pdev;
+		pdev_copy_fec1->id = 1;
+	}
+
+	dev_id++;
+#else
+	fec_probe_finish(pdev);
+#endif
+
+	return 0;
+}
 static void
 fec_drv_remove(struct platform_device *pdev)
 {
@@ -4785,7 +4868,39 @@ static struct platform_driver fec_driver = {
 	.remove_new = fec_drv_remove,
 };
 
-module_platform_driver(fec_driver);
+static int fec_enet_module_init(void)
+{
+#ifdef CONFIG_MODELO_SWITCH
+	static int fec_id = 0;
+	struct dentry *top;
+#endif
+	printk(KERN_INFO "FEC Ethernet Driver\n");
+#ifdef CONFIG_MODELO_SWITCH
+	if (fec_id != 0)
+		goto out;
+
+	top = debugfs_create_dir("switch_config", NULL);
+	if (top == NULL)
+		printk(KERN_ERR "Debugfs failed !\n");
+	else {
+		debugfs_create_u8("fec0_enabled", S_IRUGO | S_IWUSR, top, &fec0_enabled);
+		debugfs_create_u8("fec1_enabled", S_IRUGO | S_IWUSR, top, &fec1_enabled);
+	}
+
+	fec_id++;
+out:
+#endif
+	return platform_driver_register(&fec_driver);
+}
+
+static void fec_enet_cleanup(void)
+{
+	platform_driver_unregister(&fec_driver);
+}
+
+module_init(fec_enet_module_init);
+module_exit(fec_enet_cleanup);
+
 
 MODULE_DESCRIPTION("NXP Fast Ethernet Controller (FEC) driver");
 MODULE_LICENSE("GPL");
