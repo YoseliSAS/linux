@@ -12,6 +12,7 @@
  *  option) any later version.
  */
 
+#include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -37,6 +38,7 @@
 #include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/signal.h>
+#include <linux/wait.h>
 
 #include <asm/irq.h>
 #include <asm/pgtable.h>
@@ -91,6 +93,12 @@ struct port_status ports_link_status;
 
 /* the user space pid, used to send the link change to user space */
 long user_pid = 1;
+
+/* This could be done in a separate driver ? */
+static u8 switch_enabled;
+static struct platform_device *pdev_copy;
+static struct delayed_work	config_workqueue;
+#define SWE_POLL_TIMING	msecs_to_jiffies(1000)
 
 /* ----------------------------------------------------------------*/
 /*
@@ -3828,7 +3836,7 @@ static int fec_mdio_register(struct net_device *dev, int bus_number)
 	return err;
 }
 
-static int eth_switch_probe(struct platform_device *pdev)
+static int eth_switch_probe_finish(struct platform_device *pdev)
 {
 	struct net_device *dev;
 	int err;
@@ -3847,7 +3855,6 @@ static int eth_switch_probe(struct platform_device *pdev)
 	SET_NETDEV_DEV(dev, &pdev->dev);
 
 	fep = netdev_priv(dev);
-	memset(fep, 0, sizeof(*fep));
 
 	fep->pdev = pdev;
 	platform_set_drvdata(pdev, dev);
@@ -3901,6 +3908,30 @@ static int eth_switch_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static void eth_switch_enabled_work(struct work_struct *work)
+{
+	if (switch_enabled == 0) {
+		/* Not configured, get back later */
+		schedule_delayed_work(&config_workqueue, SWE_POLL_TIMING);
+	} else if (switch_enabled == 1) {
+		/* Switch is enabled, cancel the task and finish probing */
+		eth_switch_probe_finish(pdev_copy);
+	} else {
+		/* An error occured, just stop there */
+	}
+}
+
+static int eth_switch_probe(struct platform_device *pdev)
+{
+	/* Save the platform reference */
+	pdev_copy = pdev;
+
+	INIT_DELAYED_WORK(&config_workqueue, eth_switch_enabled_work);
+	schedule_delayed_work(&config_workqueue, SWE_POLL_TIMING);
+
+	return 0;
+}
+
 static void eth_switch_remove(struct platform_device *pdev)
 {
 	int i;
@@ -3940,6 +3971,15 @@ static struct platform_driver eth_switch_driver = {
 
 static int coldfire_switch_init(void)
 {
+	struct dentry *top;
+
+	top = debugfs_lookup("switch_config", NULL);
+	if (top == NULL)
+		printk(KERN_ERR "Debugfs failed !\n");
+	else
+		debugfs_create_u8("switch_enabled", S_IRUGO | S_IWUSR, top,
+				  &switch_enabled);
+
 	return platform_driver_register(&eth_switch_driver);
 }
 
