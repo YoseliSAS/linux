@@ -133,7 +133,8 @@ static void switch_get_mac(struct net_device *dev)
 		(iap[4] == 0xff) && (iap[5] == 0xff))
 		iap = switch_mac_default;
 
-	memcpy(dev->dev_addr, iap, ETH_ALEN);
+	/*  Copy the Mac address to the device structure:       */
+	eth_hw_addr_set(dev, iap);
 }
 
 static void switch_enable_phy_intr(void)
