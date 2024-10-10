@@ -200,7 +200,7 @@ static struct platform_device dspi_spi1_device = {
 static struct coldfire_spi_slave spi1_slave_info = {
 	.bus_num = 1,
 	.irq_source = MCFINT1_DSPI1,
-	.irq_vector = MCFINT1_VECBASE,
+	.irq_vector = MCFINT1_VECBASE + MCFINT1_DSPI1,
 	.irq_mask = (1 << (MCFINT1_DSPI1 - 32)),
 	.irq_lp = 0x2,		/* irq level */
 };

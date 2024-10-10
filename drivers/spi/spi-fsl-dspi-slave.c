@@ -229,9 +229,6 @@ static volatile int s2tos0_eport_hasdata;
 
 static irqreturn_t s2tos0_eport_handler(int irq, void *dev_id)
 {
-	/* Acknowledge the IRQ */
-	__raw_writeb(__raw_readb(MCFEPORT_EPFR) & MCFEPORT_EPFR_EPF4, MCFEPORT_EPFR);
-
 	s2tos0_eport_hasdata = 1;
 
 	wake_up(&s2tos0_eport_waitq);
@@ -254,7 +251,7 @@ static int s2tos0_eport_open(struct inode *inode, struct file *filp)
 
 	s2tos0_eport_firstread = true;
 
-	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_NO_THREAD, "s2tos0-eportd", NULL);
+	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_NO_THREAD, "s2tos0-eportd", NULL);
 	if (retval < 0)
 		printk(KERN_ERR "Unable to attach EPORT interrupt: %d\n", retval);
 
@@ -263,6 +260,7 @@ static int s2tos0_eport_open(struct inode *inode, struct file *filp)
 
 static int s2tos0_eport_close(struct inode *inode, struct file *filp)
 {
+	free_irq(M5441X_EPORT4_IRQ_VECTOR, NULL);
 	return 0;
 }
 
@@ -331,6 +329,7 @@ static int s2tos0_eport_init(struct platform_device *pdev, struct class * klass)
 	uint8_t byte;
 	uint16_t word;
 
+#if 0
 	/* Pinmux: PAR_IRQ04 -> Primary */
 	byte = __raw_readb(MCFGPIO_PAR_IRQ0H);
 	byte = byte | 0x0c;
@@ -359,6 +358,7 @@ static int s2tos0_eport_init(struct platform_device *pdev, struct class * klass)
 // };
 // 	s2tos0_eport_irqaction.dev_id = 0;
 // 	retval = setup_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
+#endif
 
 	/* Register /dev/s2tos0 char device */
 	s2tos0_eport_major = register_chrdev(0, S2TOS0_EPORT_DEVICE_NAME, &s2tos0_eport_fops);
@@ -707,6 +707,8 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	volatile u32 irq_status = *((volatile u32 *)drv_data->dspi_sr);
 	unsigned char nb_elem;
 
+	printk("%s\n", __func__);
+
 	/* Clear almost all flags immediately */
 	*((volatile u32 *)drv_data->dspi_sr) |=
 		(MCF_DSPI_DSR_RFOF | MCF_DSPI_DSR_TFUF);
@@ -960,8 +962,8 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	irq = platform_info->irq_vector;
 	status = request_irq(irq, dspi_interrupt, 0, "dspi-slave", drv_data);
 	if (status < 0) {
-    	dev_err(&pdev->dev, "Unable to attach ColdFire DSPI interrupt\n");
-    	goto out_error_after_drv_data_alloc;
+		dev_err(&pdev->dev, "Unable to attach ColdFire DSPI interrupt\n");
+		goto out_error_after_drv_data_alloc;
 	}
 
 	*drv_data->int_icr = platform_info->irq_lp;
