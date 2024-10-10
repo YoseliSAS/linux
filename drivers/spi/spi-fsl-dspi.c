@@ -20,6 +20,8 @@
 #include <linux/spi/spi.h>
 #include <linux/spi/spi-fsl-dspi.h>
 
+#include <asm/cacheflush.h>
+
 #define DRIVER_NAME			"fsl-dspi"
 
 #define SPI_MCR				0x00
@@ -464,6 +466,14 @@ static int dspi_dma_xfer(struct fsl_dspi *dspi)
 	struct device *dev = &dspi->pdev->dev;
 	int ret = 0;
 
+#if defined(CONFIG_COLDFIRE) && !defined(CONFIG_COLDFIRE_COHERENT_DMA)
+	/*
+	 * Hacky flush of all caches instead of using the DMA API for the TSO
+	 * headers.
+	 */
+	flush_cache_all();
+#endif
+
 	/*
 	 * dspi->len gets decremented by dspi_pop_tx_pushr in
 	 * dspi_next_xfer_dma_submit
@@ -511,17 +521,30 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 		goto err_tx_channel;
 	}
 
+#if defined(CONFIG_COLDFIRE) && defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	dma->tx_dma_buf = dma_alloc_coherent(dma->chan_tx->device->dev,
 					     dma_bufsize, &dma->tx_dma_phys,
 					     GFP_KERNEL);
+#else
+	dma->tx_dma_buf = dma_alloc_noncoherent(dma->chan_tx->device->dev,
+						dma_bufsize, &dma->tx_dma_phys,
+						DMA_BIDIRECTIONAL, GFP_KERNEL);
+
+#endif
 	if (!dma->tx_dma_buf) {
 		ret = -ENOMEM;
 		goto err_tx_dma_buf;
 	}
 
+#if defined(CONFIG_COLDFIRE) && defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	dma->rx_dma_buf = dma_alloc_coherent(dma->chan_rx->device->dev,
 					     dma_bufsize, &dma->rx_dma_phys,
 					     GFP_KERNEL);
+#else
+	dma->rx_dma_buf = dma_alloc_noncoherent(dma->chan_rx->device->dev,
+						dma_bufsize, &dma->rx_dma_phys,
+						DMA_BIDIRECTIONAL, GFP_KERNEL);
+#endif
 	if (!dma->rx_dma_buf) {
 		ret = -ENOMEM;
 		goto err_rx_dma_buf;
@@ -556,11 +579,23 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	return 0;
 
 err_slave_config:
+#if defined(CONFIG_COLDFIRE) && defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	dma_free_coherent(dma->chan_rx->device->dev,
 			  dma_bufsize, dma->rx_dma_buf, dma->rx_dma_phys);
+#else
+	dma_free_noncoherent(dma->chan_rx->device->dev,
+			     dma_bufsize, dma->rx_dma_buf, dma->rx_dma_phys,
+			     DMA_BIDIRECTIONAL);
+#endif
 err_rx_dma_buf:
+#if defined(CONFIG_COLDFIRE) && defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	dma_free_coherent(dma->chan_tx->device->dev,
 			  dma_bufsize, dma->tx_dma_buf, dma->tx_dma_phys);
+#else
+	dma_free_noncoherent(dma->chan_tx->device->dev,
+			     dma_bufsize, dma->tx_dma_buf, dma->tx_dma_phys,
+			     DMA_BIDIRECTIONAL);
+#endif
 err_tx_dma_buf:
 	dma_release_channel(dma->chan_tx);
 err_tx_channel:
@@ -1406,7 +1441,6 @@ static int dspi_probe(struct platform_device *pdev)
 	}
 
 poll_mode:
-#ifndef CONFIG_M5441x
 	if (dspi->devtype_data->trans_mode == DSPI_DMA_MODE) {
 		ret = dspi_request_dma(dspi, res->start);
 		if (ret < 0) {
@@ -1415,6 +1449,7 @@ poll_mode:
 		}
 	}
 
+#ifndef CONFIG_M5441x
 	ctlr->max_speed_hz =
 		clk_get_rate(dspi->clk) / dspi->devtype_data->max_clock_factor;
 #else
