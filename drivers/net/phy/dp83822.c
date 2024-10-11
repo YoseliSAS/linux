@@ -34,6 +34,7 @@
 #define MII_DP83822_RESET_CTRL	0x1f
 #define MII_DP83822_GENCFG	0x465
 #define MII_DP83822_SOR1	0x467
+#define MII_DP83822_SOR2	0x468
 
 /* DP83826 specific registers */
 #define MII_DP83826_VOD_CFG1	0x30b
@@ -689,6 +690,31 @@ static int dp83822_read_straps(struct phy_device *phydev)
 	return 0;
 }
 
+static int dp83826_read_straps(struct phy_device *phydev)
+{
+	struct dp83822_private *dp83822 = phydev->priv;
+	int fx_enabled, fx_sd_enable;
+	int val;
+
+	val = phy_read_mmd(phydev, DP83822_DEVADDR, MII_DP83822_SOR1);
+	if (val < 0)
+		return val;
+
+	printk("STS1 strap register: 0x%04x\n", val);
+
+	val = phy_read_mmd(phydev, DP83822_DEVADDR, MII_DP83822_SOR2);
+	if (val < 0)
+		return val;
+
+	printk("STS2 strap register: 0x%04x\n", val);
+
+	phydev->autoneg = AUTONEG_DISABLE;
+	phydev->duplex = DUPLEX_FULL;
+	phydev->speed = SPEED_100;
+
+	return 0;
+}
+
 static int dp8382x_probe(struct phy_device *phydev)
 {
 	struct dp83822_private *dp83822;
@@ -730,11 +756,16 @@ static int dp83826_probe(struct phy_device *phydev)
 {
 	int ret;
 
+	printk("%s\n", __func__);
 	ret = dp8382x_probe(phydev);
 	if (ret)
 		return ret;
 
-	dp83826_of_init(phydev);
+	ret = dp83826_read_straps(phydev);
+	if (ret)
+		return ret;
+
+	//dp83826_of_init(phydev);
 
 	return 0;
 }
@@ -782,6 +813,7 @@ static int dp83822_resume(struct phy_device *phydev)
 		.resume = dp83822_resume,			\
 	}
 
+#if 0
 #define DP83826_PHY_DRIVER(_id, _name)				\
 	{							\
 		PHY_ID_MATCH_MODEL(_id),			\
@@ -792,12 +824,21 @@ static int dp83822_resume(struct phy_device *phydev)
 		.config_init	= dp83826_config_init,		\
 		.get_wol = dp83822_get_wol,			\
 		.set_wol = dp83822_set_wol,			\
+		.read_status	= dp83822_read_status,		\
 		.config_intr = dp83822_config_intr,		\
 		.handle_interrupt = dp83822_handle_interrupt,	\
 		.suspend = dp83822_suspend,			\
 		.resume = dp83822_resume,			\
 	}
-
+#else
+#define DP83826_PHY_DRIVER(_id, _name)				\
+	{							\
+		PHY_ID_MATCH_MODEL(_id),			\
+		.name		= (_name),			\
+		/* PHY_BASIC_FEATURES */			\
+		.probe          = dp83826_probe,		\
+	}
+#endif
 #define DP8382X_PHY_DRIVER(_id, _name)				\
 	{							\
 		PHY_ID_MATCH_MODEL(_id),			\

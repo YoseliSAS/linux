@@ -181,7 +181,8 @@ static const struct fec_devinfo fec_s32v234_info = {
 };
 
 static const struct fec_devinfo fec_m54418_info = {
-	.quirks = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_RACC,
+	.quirks = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_RACC |
+		  FEC_QUIRK_NO_HARD_RESET | FEC_QUIRK_CLEAR_SETUP_MII,
 };
 
 static struct platform_device_id fec_devtype[] = {
@@ -2561,6 +2562,9 @@ static int fec_enet_mii_init(struct platform_device *pdev)
 	 * document.
 	 */
 	mii_speed = DIV_ROUND_UP(clk_get_rate(fep->clk_ipg), bus_freq * 2);
+#if defined(CONFIG_M5441x)
+	holdtime = 0;
+#else
 	if (fep->quirks & FEC_QUIRK_ENET_MAC)
 		mii_speed--;
 	if (mii_speed > 63) {
@@ -2584,7 +2588,7 @@ static int fec_enet_mii_init(struct platform_device *pdev)
 	 * holdtime cannot result in a value greater than 3.
 	 */
 	holdtime = DIV_ROUND_UP(clk_get_rate(fep->clk_ipg), 100000000) - 1;
-
+#endif
 	fep->phy_speed = mii_speed << 1 | holdtime << 8;
 
 	if (suppress_preamble)
