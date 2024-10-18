@@ -92,8 +92,11 @@ static const struct sched_param dspi_schedparam = {
 };
 #endif
 
-u64 timings[8];
-u32 timing = 0;
+#define TIMING_SIZE 8
+
+u64 timings[TIMING_SIZE] = {0};
+int timing = 0;
+u64 last_read_time = 0;
 
 /****************************************************************************/
 
@@ -767,28 +770,31 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 		/* When we enter here, we have data in hardware RX FIFO */
 		u16 in_data;
 
-		read_time = ktime_get_ns();
-		/* Store the min, max and average timing between two read_time calls */
-		if (timing < 8) {
-			timings[timing] = read_time;
-			timing++;
-		} else {
-			u64 min = timings[0];
-			u64 max = timings[0];
-			u64 avg = 0;
-			for (int i = 1; i < 8; i++) {
-				if (timings[i] < min) {
-					min = timings[i];
-				}
-				if (timings[i] > max) {
-					max = timings[i];
-				}
-				avg += timings[i];
-			}
-			avg /= 8;
-			printk(KERN_INFO "DSPI: Timing between two read_time calls: min=%llu, max=%llu, avg=%llu\n", min, max, avg);
-			timing = 0;
-		}
+		u16 in_data;
+        u64 read_time = ktime_get_ns();
+        u64 time_diff = read_time - last_read_time;
+        last_read_time = read_time;
+
+        if (timing < TIMING_SIZE) {
+            timings[timing] = time_diff;
+            timing++;
+        } else {
+            u64 min = timings[0];
+            u64 max = timings[0];
+            u64 avg = 0;
+            for (int i = 1; i < TIMING_SIZE; i++) {
+                if (timings[i] < min) {
+                    min = timings[i];
+                }
+                if (timings[i] > max) {
+                    max = timings[i];
+                }
+                avg += timings[i];
+            }
+            avg /= TIMING_SIZE;
+            printk(KERN_INFO "DSPI: Timing between two read_time calls: min=%llu, max=%llu, avg=%llu\n", min, max, avg);
+            timing = 0;
+        }
 
 		/* While datas are available in HW RX FIFO, we drain it. */
 		while (*((volatile u32 *)drv_data->dspi_sr) & MCF_DSPI_DSR_RFDF) {
