@@ -769,8 +769,6 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	if (!restart_dspi && (irq_status & MCF_DSPI_DSR_RFDF)) {
 		/* When we enter here, we have data in hardware RX FIFO */
 		u16 in_data;
-
-		u16 in_data;
         u64 read_time = ktime_get_ns();
         u64 time_diff = read_time - last_read_time;
         last_read_time = read_time;
