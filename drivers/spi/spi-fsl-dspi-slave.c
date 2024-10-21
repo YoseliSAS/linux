@@ -34,6 +34,7 @@
 
 #include <linux/cdev.h>
 #include <linux/debugfs.h>
+#include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/device.h>
@@ -95,6 +96,7 @@ static const struct sched_param dspi_schedparam = {
 
 static inline void sync_s0tos2_set(u8 val)
 {
+#if 1
 	/* GPIOG3 output mode */
 	__raw_writeb(__raw_readb(MCFGPIO_PDDR_G) | (1 << 3), MCFGPIO_PDDR_G);
 
@@ -107,14 +109,31 @@ static inline void sync_s0tos2_set(u8 val)
 		__raw_writeb(__raw_readb(MCFGPIO_PODR_G) | (1 << 3), MCFGPIO_PODR_G); /* GPIOG3 set to 1 */
 	else
 		__raw_writeb(__raw_readb(MCFGPIO_PODR_G) & ~(1 << 3), MCFGPIO_PODR_G); /* GPIOG3 set to 0 */
+#else
+#ifdef S0TOS2_LOGIC_INVERTED
+	if (!val)
+#else
+	if (val)
+#endif
+	/* G3 => 7*8 + 3 */
+	gpio_request(59, "sync_s0tos2");
+	gpio_direction_output(59, !!val);
+#endif
 }
 
 static inline u8 sync_s2tos0_get(void)
 {
+#if 0
 	/* GPIOC4 input mode */
 	__raw_writeb(__raw_readb(MCFGPIO_PDDR_C) & ~(1 << 4), MCFGPIO_PDDR_C);
 
 	return __raw_readb(MCFGPIO_PPDSDR_C) & (1 << 4);
+#else
+	/* C4 => 3*8 + 4 */
+	gpio_request(28, "sync_s2tos0");
+	gpio_direction_input(28);
+	return gpio_get_value(28);
+#endif
 }
 
 static inline void stat_reset_counters(struct driver_data *drv_data)
