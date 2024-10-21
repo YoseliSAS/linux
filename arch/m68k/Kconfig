@@ -41,6 +41,7 @@ config M68K
 	select ZONE_DMA
 	select ARCH_SUPPORTS_RT
 	select IRQ_FORCED_THREADING
+	select TRACE_IRQFLAGS_SUPPORT
 
 config CPU_BIG_ENDIAN
 	def_bool y

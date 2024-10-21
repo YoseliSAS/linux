@@ -57,6 +57,9 @@ enosys:
 ENTRY(system_call)
 	SAVE_ALL_SYS
 	move	#0x2000,%sr		/* enable intrs again */
+#ifdef CONFIG_TRACE_IRQFLAGS
+	jbsr	trace_hardirqs_on
+#endif
 	GET_CURRENT(%d2)
 
 	cmpl	#NR_syscalls,%d0
@@ -99,6 +102,9 @@ ENTRY(system_call)
 	addql	#4,%sp
 
 ret_from_exception:
+#ifdef CONFIG_TRACE_IRQFLAGS
+	jbsr	trace_hardirqs_off
+#endif
 	move	#0x2700,%sr		/* disable intrs */
 	btst	#5,%sp@(PT_OFF_SR)	/* check if returning to kernel */
 	jeq	Luser_return		/* if so, skip resched, signals */
@@ -140,6 +146,9 @@ Lreturn:
 Lwork_to_do:
 	movel	%a0@(TINFO_FLAGS),%d1	/* get thread_info->flags */
 	move	#0x2000,%sr		/* enable intrs again */
+#ifdef CONFIG_TRACE_IRQFLAGS
+	jbsr	trace_hardirqs_on
+#endif
 	btst	#TIF_NEED_RESCHED,%d1
 	jne	reschedule
 
