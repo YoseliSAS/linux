@@ -85,17 +85,11 @@
 
 static irqreturn_t dspi_interrupt(int, void *);
 
-#if !defined(DSPI_SLAVE_HARDIRQ_HANDLER)
-/* This is to enhance IRQ handler priority to RT */
-static const struct sched_param dspi_schedparam = {
-	.sched_priority = MAX_RT_PRIO - 1,
-};
-#endif
-
 /****************************************************************************/
 
 static inline void sync_s0tos2_set(u8 val)
 {
+	trace_printk("DSPI: sync_s0tos2 = %s\n", val ? "0" : "1");
 #if 1
 	/* GPIOG3 output mode */
 	__raw_writeb(__raw_readb(MCFGPIO_PDDR_G) | (1 << 3), MCFGPIO_PDDR_G);
@@ -202,6 +196,7 @@ static inline int kfifo_tx_kfifo_to_hw(struct driver_data *drv_data)
 		drv_data->stat_spi_nbbytes_sent += nb_elem;
 	}
 
+	trace_printk("Sent %d bytes in HW TX fifo\n", total_sent);
 	return total_sent;
 }
 
@@ -249,30 +244,29 @@ static volatile int s2tos0_eport_hasdata;
 static irqreturn_t s2tos0_eport_handler(int irq, void *dev_id)
 {
 	s2tos0_eport_hasdata = 1;
-
+	
 	wake_up(&s2tos0_eport_waitq);
 
 	return IRQ_HANDLED;
 }
-
-#if !defined(DSPI_SLAVE_HARDIRQ_HANDLER) && (defined(CONFIG_PREEMPT_RTB) || defined(CONFIG_PREEMPT_RT_FULL))
-/* This is to enhance IRQ handler priority to RT */
-static const struct sched_param s2tos0_eport_schedparam = {
-	.sched_priority = MAX_RT_PRIO - 2,
-};
-#endif
 
 /* File operations */
 static int s2tos0_eport_open(struct inode *inode, struct file *filp)
 {
 	int retval = 0;
 	struct cdev *cdev = inode->i_cdev;
+	struct sched_param sp;
 
 	s2tos0_eport_firstread = true;
 
-	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_NO_THREAD, "s2tos0-eportd", NULL);
+	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING, "s2tos0-eportd", NULL);
 	if (retval < 0)
 		printk(KERN_ERR "Unable to attach EPORT interrupt: %d\n", retval);
+
+	trace_printk("Set priority\n");
+	sp.sched_priority = MAX_RT_PRIO - 2;
+	sched_setscheduler_nocheck(current, SCHED_FIFO, &sp);
+
 
 	return retval;
 }
@@ -497,12 +491,15 @@ static ssize_t chrdev_device_read(struct file *filp,
 	/* If RX Fifo is not full, we block the caller */
 	while (!kfifo_is_full(&rx_kfifo)) {
 
+		trace_printk("Wait for FIFO\n");
+
 		prepare_to_wait(&read_wq, &wait, TASK_INTERRUPTIBLE);
 
 		if (chrdev_drvdata->stream_restarted) {
 			chrdev_drvdata->stream_restarted = false;
 			finish_wait(&read_wq, &wait);
 
+			trace_printk("Stream restarted\n");
 			/* Blocking read() return 0 after signal */
 			return 0;
 
@@ -516,7 +513,11 @@ static ssize_t chrdev_device_read(struct file *filp,
 			timeout = schedule_timeout(HZ/200); /* 5ms */
 
 		if (! timeout) {
+#ifndef CONFIG_TRACING
 			printk_once(KERN_ERR "DSPI: timeout occured on read() syscall\n");
+#else
+			trace_printk("Timeout on read() syscall\n");
+#endif
 
 			finish_wait(&read_wq, &wait);
 
@@ -529,6 +530,7 @@ static ssize_t chrdev_device_read(struct file *filp,
 
 	/* Data are ready, now we send them to the caller */
 	status = kfifo_to_user(&rx_kfifo, buffer, length, &nb_bytes);
+	trace_printk("Sent back %d bytes to user, status: %d\n", nb_bytes, status);
 
 	return status ? status : nb_bytes;
 }
@@ -549,12 +551,14 @@ static ssize_t chrdev_device_write(struct file *filp,
 	 * write() call sequence is not respected */
 	if (MCF_DSPI_DSR_GET_TXCTR(*(volatile u32 *)chrdev_drvdata->dspi_sr)) {
 
+		trace_printk("HW TX fifo not empty !\n");
 		/* printk (KERN_DEBUG "DSPI: HW TX Fifo is not empty\n"); */
 		return -EIO;
 	}
 
 	/* This should never happen */
 	if (!kfifo_is_empty(&tx_kfifo)) {
+		trace_printk("SW TX fifo no empty !\n");
 		/* printk (KERN_DEBUG "DSPI: tx_kfifo is not empty\n"); */
 		return -EBUSY;
 	}
@@ -726,8 +730,6 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	volatile u32 irq_status = *((volatile u32 *)drv_data->dspi_sr);
 	unsigned char nb_elem;
 
-	printk("%s\n", __func__);
-
 	/* Clear almost all flags immediately */
 	*((volatile u32 *)drv_data->dspi_sr) |=
 		(MCF_DSPI_DSR_RFOF | MCF_DSPI_DSR_TFUF);
@@ -735,10 +737,13 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	if (irq_status & MCF_DSPI_DSR_RFOF) {
 		/* RX HW FIFO overflow occurs */
 		drv_data->stat_rx_hwfifo_overflow += 1;
-
+#ifndef CONFIG_TRACING
 		dev_dbg(dev,
 		 	"DSPI: dspi-slave: RX FIFO overflow occurs (occur. #%llu) !\n",
 			drv_data->stat_rx_hwfifo_overflow);
+#else
+		trace_printk("RX FIFO overflow\n");
+#endif
 
 		restart_dspi = true;
 	}
@@ -747,9 +752,13 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 		/* TX HW FIFO underflow occurs */
 		drv_data->stat_tx_hwfifo_underflow += 1;
 
+#ifndef CONFIG_TRACING
 		dev_dbg(dev,
 			"DSPI: dspi-slave: TX FIFO underflow occurs (occur. #%llu) !\n",
 			drv_data->stat_tx_hwfifo_underflow);
+#else
+		trace_printk("TX FIFO overflow\n");
+#endif
 
 		restart_dspi = true;
 	}
@@ -766,6 +775,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 
 		/* When we enter here, we have data in hardware RX FIFO */
 		u16 in_data;
+		u32 rcv_bytes = 0;
 
 		/* While datas are available in HW RX FIFO, we drain it. */
 		while (*((volatile u32 *)drv_data->dspi_sr) & MCF_DSPI_DSR_RFDF) {
@@ -784,15 +794,18 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 
 			/* Finally, we push received data into rx_kfifo */
 			nb_elem = kfifo_in(&rx_kfifo, (void *)&in_data, 2);
+			rcv_bytes += nb_elem;
 
 			if (!nb_elem) {
 				/* RX kfifo is full : this means userspace
 				 * application is not fast enought to pop value
 				 */
+				trace_printk("Kfifo FULL !\n");
 				drv_data->stat_rx_kfifo_overflow += 1;
 				restart_dspi = true;
 			}
 		}
+		trace_printk("Received %u bytes\n", rcv_bytes);
 	}
 
 	/*
@@ -801,6 +814,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	if (restart_dspi) {
 		/* Here, we missed some data.
 		 * we need to reset the whole DSPI block to clear fifo */
+		trace_printk("Restart FIFO\n");
 
 		/* We inform S12X not to send a bitstream anymore */
 		sync_s0tos2_set(false);
@@ -824,6 +838,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	}
 
 	/* Let's awake any sleeping process waiting on read() syscall */
+	trace_printk("Wake up read queue\n");
 	wake_up_interruptible(&read_wq);
 
 	return IRQ_HANDLED;
@@ -894,6 +909,7 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	struct resource *memory_resource;
 	int irq;
 	int status = 0;
+	struct sched_param sp;
 	
 	platform_info = (struct coldfire_spi_slave *)dev->platform_data;
 	
@@ -984,6 +1000,9 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Unable to attach ColdFire DSPI interrupt\n");
 		goto out_error_after_drv_data_alloc;
 	}
+
+	sp.sched_priority = MAX_RT_PRIO - 1;
+	sched_setscheduler_nocheck(current, SCHED_FIFO, &sp);
 
 	*drv_data->int_icr = platform_info->irq_lp;
 	*drv_data->int_mr &= ~platform_info->irq_mask;

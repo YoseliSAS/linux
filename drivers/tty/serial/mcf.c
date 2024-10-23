@@ -347,6 +347,7 @@ static irqreturn_t mcf_interrupt(int irq, void *data)
 	struct mcf_uart *pp = container_of(port, struct mcf_uart, port);
 	unsigned int isr;
 	irqreturn_t ret = IRQ_NONE;
+	u32 rx_count = port->icount.rx;
 
 	isr = readb(port->membase + MCFUART_UISR) & pp->imr;
 
@@ -361,6 +362,8 @@ static irqreturn_t mcf_interrupt(int irq, void *data)
 	}
 	uart_port_unlock(port);
 
+	if (port->port_id == 2)
+		trace_printk("Rx %d bytes\n", port->icount.rx - rx_count);
 	return ret;
 }
 

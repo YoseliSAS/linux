@@ -45,11 +45,13 @@ asmlinkage void ret_from_kernel_thread(void);
 
 void arch_cpu_idle(void)
 {
+#ifndef CONFIG_PREEMPT
 #if defined(MACH_ATARI_ONLY)
 	/* block out HSYNC on the atari (falcon) */
 	__asm__("stop #0x2200" : : : "cc");
 #else
 	__asm__("stop #0x2000" : : : "cc");
+#endif
 #endif
 }
 

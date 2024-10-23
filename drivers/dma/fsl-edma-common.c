@@ -46,6 +46,7 @@
 
 void fsl_edma_tx_chan_handler(struct fsl_edma_chan *fsl_chan)
 {
+	trace_printk("%s\n", __func__);
 	spin_lock(&fsl_chan->vchan.lock);
 
 	if (!fsl_chan->edesc) {
