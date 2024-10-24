@@ -253,27 +253,15 @@ static irqreturn_t s2tos0_eport_handler(int irq, void *dev_id)
 /* File operations */
 static int s2tos0_eport_open(struct inode *inode, struct file *filp)
 {
-	int retval = 0;
 	struct cdev *cdev = inode->i_cdev;
-	struct sched_param sp;
 
 	s2tos0_eport_firstread = true;
 
-	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING, "s2tos0-eportd", NULL);
-	if (retval < 0)
-		printk(KERN_ERR "Unable to attach EPORT interrupt: %d\n", retval);
-
-	trace_printk("Set priority\n");
-	sp.sched_priority = MAX_RT_PRIO - 2;
-	sched_setscheduler_nocheck(current, SCHED_FIFO, &sp);
-
-
-	return retval;
+	return 0;
 }
 
 static int s2tos0_eport_close(struct inode *inode, struct file *filp)
 {
-	free_irq(M5441X_EPORT4_IRQ_VECTOR, NULL);
 	return 0;
 }
 
@@ -394,6 +382,10 @@ static int s2tos0_eport_init(struct platform_device *pdev, struct class * klass)
 		retval = PTR_ERR(s2tos0_eport_device);
 		goto device_create_failed;
 	}
+
+	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING, "s2tos0-eportd", NULL);
+	if (retval < 0)
+		printk(KERN_ERR "Unable to attach EPORT interrupt: %d\n", retval);
 
 	return 0;
 
@@ -1000,9 +992,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Unable to attach ColdFire DSPI interrupt\n");
 		goto out_error_after_drv_data_alloc;
 	}
-
-	sp.sched_priority = MAX_RT_PRIO - 1;
-	sched_setscheduler_nocheck(current, SCHED_FIFO, &sp);
 
 	*drv_data->int_icr = platform_info->irq_lp;
 	*drv_data->int_mr &= ~platform_info->irq_mask;
