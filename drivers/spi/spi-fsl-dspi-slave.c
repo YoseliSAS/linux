@@ -414,6 +414,9 @@ static void s2tos0_eport_exit(struct platform_device *pdev)
 
 /****************************************************************************/
 
+/* Default timeout to 5s */
+static int read_fifo_timeout = 5*HZ;
+
 /*
  * /dev callbacks
  */
@@ -499,10 +502,13 @@ static ssize_t chrdev_device_read(struct file *filp,
 			// return -ERESTARTSYS;
 		}
 
+
 		/* Only schedule if kfifo is empty. Else, it means SPI data are incoming.
 		 * In that second case, we busy loop to avoid latency in context switch */
-		if (kfifo_is_empty(&rx_kfifo) /* && kfifo_len(&rx_kfifo) < length */)
-			timeout = schedule_timeout(HZ/200); /* 5ms */
+		if (kfifo_is_empty(&rx_kfifo) /* && kfifo_len(&rx_kfifo) < length */) {
+			printk_once("Timeout set to %d\n", read_fifo_timeout);
+			timeout = schedule_timeout(read_fifo_timeout);
+		}
 
 		if (! timeout) {
 #ifndef CONFIG_TRACING
@@ -721,10 +727,17 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	struct device * dev = &drv_data->pdev->dev;
 	volatile u32 irq_status = *((volatile u32 *)drv_data->dspi_sr);
 	unsigned char nb_elem;
+	static bool first_call = true;
 
 	/* Clear almost all flags immediately */
 	*((volatile u32 *)drv_data->dspi_sr) |=
 		(MCF_DSPI_DSR_RFOF | MCF_DSPI_DSR_TFUF);
+
+	if (unlikely(first_call)) {
+		trace_printk("Set read timeout to 5ms\n");
+		read_fifo_timeout = msecs_to_jiffies(5);
+		first_call = false;
+	}
 
 	if (irq_status & MCF_DSPI_DSR_RFOF) {
 		/* RX HW FIFO overflow occurs */
