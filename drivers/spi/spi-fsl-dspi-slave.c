@@ -486,8 +486,6 @@ static ssize_t chrdev_device_read(struct file *filp,
 	/* If RX Fifo is not full, we block the caller */
 	while (!kfifo_is_full(&rx_kfifo)) {
 
-		trace_printk("Wait for FIFO\n");
-
 		prepare_to_wait(&read_wq, &wait, TASK_INTERRUPTIBLE);
 
 		if (chrdev_drvdata->stream_restarted) {
