@@ -87,10 +87,31 @@ static struct mcf_platform_uart mcf_uart_platform_data[] = {
 	{ },
 };
 
+static struct resource mcf_uart_resource[] = {
+	[0] = {
+		.start = MCFUART_BASE0,
+		.end   = MCFUART_BASE0 + 0x3fff,
+		.flags = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start = 6,
+		.end   = 7,
+		.flags = IORESOURCE_DMA,
+	},
+};
+
+static u64 mcf_uart_mask = DMA_BIT_MASK(32);
+
 static struct platform_device mcf_uart = {
 	.name			= "mcfuart",
 	.id			= 0,
-	.dev.platform_data	= mcf_uart_platform_data,
+	.num_resources = ARRAY_SIZE(mcf_uart_resource),
+	.resource = mcf_uart_resource,
+	.dev = {
+		.platform_data = &mcf_uart_platform_data,
+		.dma_mask = &mcf_uart_mask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
 };
 
 #if IS_ENABLED(CONFIG_FEC)
