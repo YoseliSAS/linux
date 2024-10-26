@@ -29,6 +29,66 @@ EXPORT_SYMBOL(uboot_enet0);
 unsigned char uboot_enet1[6] = {0};
 EXPORT_SYMBOL(uboot_enet1);
 
+static u64 mcf_uart_mask = DMA_BIT_MASK(32);
+
+static struct resource mcf_uart2_resource[] = {
+	[0] = {
+		.start = MCFUART_BASE2,
+		.end   = MCFUART_BASE2 + 0x3fff,
+		.flags = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start = 6,
+		.end   = 7,
+		.flags = IORESOURCE_DMA,
+	},
+	[2] = {
+		.start = MCF_IRQ_UART2,
+		.end   = MCF_IRQ_UART2,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device mcf_uart2 = {
+	.name			= "mcfuart",
+	.id			= 2,
+	.num_resources = ARRAY_SIZE(mcf_uart2_resource),
+	.resource = mcf_uart2_resource,
+	.dev = {
+		.dma_mask = &mcf_uart_mask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
+};
+
+static struct resource mcf_uart6_resource[] = {
+	[0] = {
+		.start = MCFUART_BASE6,
+		.end   = MCFUART_BASE6 + 0x3fff,
+		.flags = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start = 22,
+		.end   = 23,
+		.flags = IORESOURCE_DMA,
+	},
+	[2] = {
+		.start = MCF_IRQ_UART6,
+		.end   = MCF_IRQ_UART6,
+		.flags = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device mcf_uart6 = {
+	.name			= "mcfuart",
+	.id			= 6,
+	.num_resources = ARRAY_SIZE(mcf_uart6_resource),
+	.resource = mcf_uart6_resource,
+	.dev = {
+		.dma_mask = &mcf_uart_mask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
+};
+
 static struct mtd_partition dlc_next_nor_partitions[] = {
 	{
 		.name = "w25q01",
@@ -253,6 +313,8 @@ static struct platform_device dspi_spi1_device = {
 #endif
 
 static struct platform_device *dlc_next_devices[] __initdata = {
+	&mcf_uart2,
+	&mcf_uart6,
 	&nfc_device,
 	&dspi_spi0_device,
 	&dspi_spi1_device,
