@@ -835,17 +835,13 @@ static int mcf_probe(struct platform_device *pdev)
 	void __iomem *base;
 	int i, ret;
 
-	for (i = 0; ((i < MCF_MAXPORTS) && (platp[i].mapbase)); i++) {
+	for (i = 0; (i < MCF_MAXPORTS); i++) {
 		port = &mcf_ports[i].port;
 
 		port->line = i;
 		port->type = PORT_MCF;
-		port->mapbase = platp[i].mapbase;
-		port->membase = (platp[i].membase) ? platp[i].membase :
-			(unsigned char __iomem *) platp[i].mapbase;
 		port->dev = &pdev->dev;
 		port->iotype = SERIAL_IO_MEM;
-		port->irq = platp[i].irq;
 		port->uartclk = MCF_BUSCLK;
 		port->ops = &mcf_uart_ops;
 		port->flags = UPF_BOOT_AUTOCONF;
@@ -855,15 +851,15 @@ static int mcf_probe(struct platform_device *pdev)
 
 		pp = container_of(port, struct mcf_uart, port);
 		pp->dma_chan_rx = NULL;
-		if (i == 2) {
-			base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
-			if (IS_ERR(base)) {
-				ret = PTR_ERR(base);
-				dev_err(&pdev->dev, "Could not get resources: %d\n", ret);
-			}
-			mcf_dma_setup(port);
+		
+		base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+		if (IS_ERR(base)) {
+			ret = PTR_ERR(base);
+			dev_err(&pdev->dev, "Could not get resources: %d\n", ret);
 		}
-
+		port->membase = base;
+		mcf_dma_setup(port);
+		
 		uart_add_one_port(&mcf_driver, port);
 	}
 
