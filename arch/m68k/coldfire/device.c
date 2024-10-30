@@ -24,73 +24,35 @@
 #include <linux/platform_data/dma-mcf-edma.h>
 #include <linux/platform_data/mmc-esdhc-mcf.h>
 
-/*
- *	All current ColdFire parts contain from 2, 3, 4 or 10 UARTS.
- */
-static struct mcf_platform_uart mcf_uart_platform_data[] = {
-	{
-		.mapbase	= MCFUART_BASE0,
-		.irq		= MCF_IRQ_UART0,
+static u64 mcf_uart_mask = DMA_BIT_MASK(32);
+
+static struct resource mcf_uart0_resource[] = {
+	[0] = {
+		.start = MCFUART_BASE0,
+		.end   = MCFUART_BASE0 + 0x3fff,
+		.flags = IORESOURCE_MEM,
 	},
-	{
-		.mapbase	= MCFUART_BASE1,
-		.irq		= MCF_IRQ_UART1,
+	[1] = {
+		.start = 2,
+		.end   = 3,
+		.flags = IORESOURCE_DMA,
 	},
-#ifdef MCFUART_BASE2
-	{
-		.mapbase	= MCFUART_BASE2,
-		.irq		= MCF_IRQ_UART2,
+	[2] = {
+		.start = MCF_IRQ_UART0,
+		.end   = MCF_IRQ_UART0,
+		.flags = IORESOURCE_IRQ,
 	},
-#endif
-#ifdef MCFUART_BASE3
-	{
-		.mapbase	= MCFUART_BASE3,
-		.irq		= MCF_IRQ_UART3,
-	},
-#endif
-#ifdef MCFUART_BASE4
-	{
-		.mapbase	= MCFUART_BASE4,
-		.irq		= MCF_IRQ_UART4,
-	},
-#endif
-#ifdef MCFUART_BASE5
-	{
-		.mapbase	= MCFUART_BASE5,
-		.irq		= MCF_IRQ_UART5,
-	},
-#endif
-#ifdef MCFUART_BASE6
-	{
-		.mapbase	= MCFUART_BASE6,
-		.irq		= MCF_IRQ_UART6,
-	},
-#endif
-#ifdef MCFUART_BASE7
-	{
-		.mapbase	= MCFUART_BASE7,
-		.irq		= MCF_IRQ_UART7,
-	},
-#endif
-#ifdef MCFUART_BASE8
-	{
-		.mapbase	= MCFUART_BASE8,
-		.irq		= MCF_IRQ_UART8,
-	},
-#endif
-#ifdef MCFUART_BASE9
-	{
-		.mapbase	= MCFUART_BASE9,
-		.irq		= MCF_IRQ_UART9,
-	},
-#endif
-	{ },
 };
 
-static struct platform_device mcf_uart = {
+static struct platform_device mcf_uart0 = {
 	.name			= "mcfuart",
 	.id			= 0,
-	.dev.platform_data	= mcf_uart_platform_data,
+	.num_resources = ARRAY_SIZE(mcf_uart0_resource),
+	.resource = mcf_uart0_resource,
+	.dev = {
+		.dma_mask = &mcf_uart_mask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
 };
 
 #ifdef MCFFEC_BASE0
@@ -485,12 +447,12 @@ static struct platform_device mcf_i2c5 = {
 static const struct dma_slave_map mcf_edma_map[] = {
 	{ "dreq0", "rx-tx", MCF_EDMA_FILTER_PARAM(0) },
 	{ "dreq1", "rx-tx", MCF_EDMA_FILTER_PARAM(1) },
-	{ "uart.0", "rx", MCF_EDMA_FILTER_PARAM(2) },
-	{ "uart.0", "tx", MCF_EDMA_FILTER_PARAM(3) },
-	{ "uart.1", "rx", MCF_EDMA_FILTER_PARAM(4) },
-	{ "uart.1", "tx", MCF_EDMA_FILTER_PARAM(5) },
-	{ "uart.2", "rx", MCF_EDMA_FILTER_PARAM(6) },
-	{ "uart.2", "tx", MCF_EDMA_FILTER_PARAM(7) },
+	{ "mcfuart.0", "rx", MCF_EDMA_FILTER_PARAM(2) },
+	{ "mcfuart.0", "tx", MCF_EDMA_FILTER_PARAM(3) },
+	{ "mcfuart.1", "rx", MCF_EDMA_FILTER_PARAM(4) },
+	{ "mcfuart.1", "tx", MCF_EDMA_FILTER_PARAM(5) },
+	{ "mcfuart.2", "rx", MCF_EDMA_FILTER_PARAM(6) },
+	{ "mcfuart.2", "tx", MCF_EDMA_FILTER_PARAM(7) },
 	{ "timer0", "rx-tx", MCF_EDMA_FILTER_PARAM(8) },
 	{ "timer1", "rx-tx", MCF_EDMA_FILTER_PARAM(9) },
 	{ "timer2", "rx-tx", MCF_EDMA_FILTER_PARAM(10) },
@@ -656,7 +618,7 @@ static struct platform_device mcf_flexcan1 = {
 #endif /* MCFFLEXCAN_SIZE */
 
 static struct platform_device *mcf_devices[] __initdata = {
-	&mcf_uart,
+	&mcf_uart0,
 #ifdef MCFFEC_BASE0
 	&mcf_fec0,
 #endif
