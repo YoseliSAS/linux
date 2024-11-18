@@ -869,7 +869,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 		 	"DSPI: dspi-slave: RX FIFO overflow occurs (occur. #%llu) !\n",
 			drv_data->stat_rx_hwfifo_overflow);
 #else
-		//trace_printk("RX FIFO overflow\n");
+		trace_printk("RX FIFO overflow\n");
 #endif
 
 		restart_dspi = true;
@@ -884,7 +884,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 			"DSPI: dspi-slave: TX FIFO underflow occurs (occur. #%llu) !\n",
 			drv_data->stat_tx_hwfifo_underflow);
 #else
-		//trace_printk("TX FIFO overflow\n");
+		trace_printk("TX FIFO overflow\n");
 #endif
 
 		restart_dspi = true;
