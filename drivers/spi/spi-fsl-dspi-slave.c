@@ -103,7 +103,7 @@ static irqreturn_t dspi_interrupt(int, void *);
 /* Default timeout to 5s */
 static ktime_t read_fifo_timeout = 5ULL * NSEC_PER_SEC;
 
-static DEFINE_SEMAPHORE(rw_lock, 1);
+//static DEFINE_SEMAPHORE(rw_lock, 1);
 
 /****************************************************************************/
 
@@ -440,7 +440,7 @@ static void s2tos0_eport_exit(struct platform_device *pdev)
  * /dev callbacks
  */
 
- static void measure_time(void)
+ static void measure_time(bool forced, unsigned long long bytes)
  {
 	static int count = 0;
 
@@ -453,8 +453,9 @@ static void s2tos0_eport_exit(struct platform_device *pdev)
 		min_intermediate_time = diff_intermediate_time < min_intermediate_time ? diff_intermediate_time : min_intermediate_time;
 		max_intermediate_time = diff_intermediate_time > max_intermediate_time ? diff_intermediate_time : max_intermediate_time;
 		count++;
-		if (count == 400) {
+		if ((count == 400) || forced) {
 			/* start_time: IRQ, intermediate_time: ioctl response, stop_time: TX done */
+			//trace_printk("Received %llu bytes\n", bytes);
 			trace_printk("IRQ RX -> ioctl out - Min: %lld, Max: %lld, jitter: %lld\n",
 				ktime_to_ns(min_start_to_intermediate_time), ktime_to_ns(max_start_to_intermediate_time), ktime_to_ns(ktime_sub(max_start_to_intermediate_time, min_start_to_intermediate_time)));
 			trace_printk("ioctl out -> TX - Min: %lld, Max: %lld, jitter: %lld\n",
@@ -514,7 +515,7 @@ static ssize_t chrdev_device_read(struct file *filp,
 	int status;
 	unsigned int nb_bytes;
 	signed long timeout = 1;
-	DEFINE_WAIT(wait);
+	//DEFINE_WAIT(wait);
 
 	/* Buffer size must be at least equal to kfifo size */
 	if (length < SPISLAVE_MSG_FIFO_SIZE) {
@@ -530,12 +531,15 @@ static ssize_t chrdev_device_read(struct file *filp,
 
 	/* If RX Fifo is not full, we block the caller */
 	while (!kfifo_is_full(&rx_kfifo)) {
-
-		prepare_to_wait(&read_buf_wq, &wait, TASK_INTERRUPTIBLE);
+		chrdev_drvdata->kthread = current;
+		set_current_state(TASK_INTERRUPTIBLE);
+		trace_printk("wait for data\n");
+		//prepare_to_wait(&read_buf_wq, &wait, TASK_INTERRUPTIBLE);
 
 		if (chrdev_drvdata->stream_restarted) {
 			chrdev_drvdata->stream_restarted = false;
-			finish_wait(&read_buf_wq, &wait);
+			set_current_state(TASK_RUNNING);
+			//finish_wait(&read_buf_wq, &wait);
 
 			//trace_printk("Stream restarted\n");
 			/* Blocking read() return 0 after signal */
@@ -549,33 +553,34 @@ static ssize_t chrdev_device_read(struct file *filp,
 		/* Only schedule if kfifo is empty. Else, it means SPI data are incoming.
 		 * In that second case, we busy loop to avoid latency in context switch */
 		if (kfifo_is_empty(&rx_kfifo) /* && kfifo_len(&rx_kfifo) < length */) {
-			printk_once("Timeout set to %lld\n", read_fifo_timeout);
-			timeout = schedule_hrtimeout(&read_fifo_timeout, HRTIMER_MODE_REL);
+			//timeout = schedule_hrtimeout(&read_fifo_timeout, HRTIMER_MODE_REL);
+			timeout = schedule_timeout(msecs_to_jiffies(ktime_to_ms(read_fifo_timeout)));
 		}
 
 		if (! timeout) {
 #ifndef CONFIG_TRACING
 			printk_once(KERN_ERR "DSPI: timeout occured on read() syscall\n");
 #else
-			//trace_printk("Timeout on read() syscall\n");
+			trace_printk("Timeout on read() syscall\n");
 #endif
 
-			finish_wait(&read_buf_wq, &wait);
+			//finish_wait(&read_buf_wq, &wait);
 
 			/* Unblock application with empty buffer */
 			return -EAGAIN;
 		}
 	}
 
-	finish_wait(&read_buf_wq, &wait);
-
+	//finish_wait(&read_buf_wq, &wait);
+#if 0
 	intermediate_time = ktime_get();
 	diff_start_to_intermediate_time = ktime_sub(intermediate_time, start_time);
 	min_start_to_intermediate_time = diff_start_to_intermediate_time < min_start_to_intermediate_time ? diff_start_to_intermediate_time : min_start_to_intermediate_time;
 	max_start_to_intermediate_time = diff_start_to_intermediate_time > max_start_to_intermediate_time ? diff_start_to_intermediate_time : max_start_to_intermediate_time;
+#endif
 	/* Data are ready, now we send them to the caller */
 	status = kfifo_to_user(&rx_kfifo, buffer, length, &nb_bytes);
-	//trace_printk("Sent back %d bytes to user, status: %d\n", nb_bytes, status);
+	trace_printk("Sent back %d bytes to user, status: %d\n", nb_bytes, status);
 
 	return status ? status : nb_bytes;
 }
@@ -611,15 +616,15 @@ static ssize_t chrdev_device_write(struct file *filp,
 	/* Push whole buffer in TX fifo */
 	status = kfifo_from_user(&tx_kfifo, buffer, length, &nb_bytes);
 
-	trace_printk("Write ok, read again !\n");
-	up(&rw_lock);
+	//up(&rw_lock);
 	/* If HW TX FIFO is empty, we transfer datas from
 	 * kfifo to HW FIFO. */
 	if (!status)
 		nb_bytes = kfifo_tx_kfifo_to_hw(chrdev_drvdata);
 
-	measure_time();
+	//measure_time(false, chrdev_drvdata->stat_spi_nbbytes_recv);
 
+	trace_printk("Write %d bytes to HW FIFO\n", nb_bytes);
 	chrdev_drvdata->is_reading = 0;
 	return status ? status : nb_bytes;
 }
@@ -667,12 +672,13 @@ static long chrdev_device_ioctl(struct file *filp, unsigned int cmd, unsigned lo
 
 	switch (cmd) {
 	case SPIRT_IOCTL_GET_FRAME:
+#if 0
 		DEFINE_WAIT(wait);
 		if (down_trylock(&rw_lock) == 0) {
 			trace_printk("Get frame ioctl, wait for data\n");
 			/* Data are ready, now we send them to the caller */
 			prepare_to_wait(&read_buf_wq, &wait, TASK_INTERRUPTIBLE);
-#if 0
+
 			if (chrdev_drvdata->stream_restarted) {
 				chrdev_drvdata->stream_restarted = false;
 				finish_wait(&read_buf_wq, &wait);
@@ -681,7 +687,7 @@ static long chrdev_device_ioctl(struct file *filp, unsigned int cmd, unsigned lo
 				/* Blocking read() return 0 after signal */
 				ret = 0;
 			}
-#endif
+
 			timeout = schedule_hrtimeout(&read_fifo_timeout, HRTIMER_MODE_REL);
 			if (!timeout) {
 		#ifndef CONFIG_TRACING
@@ -696,6 +702,7 @@ static long chrdev_device_ioctl(struct file *filp, unsigned int cmd, unsigned lo
 				ret = -EAGAIN;
 			}
 		}
+#endif
 		break;
 	case SPIRT_IOCTL_SET_FRAME:
 		break;
@@ -917,7 +924,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 
 			/* Increment stat incoming bytes counter */
 			drv_data->stat_spi_nbbytes_recv += 2;
-#if 0
+#if 1
 			/* Finally, we push received data into rx_kfifo */
 			nb_elem = kfifo_in(&rx_kfifo, (void *)&in_data, 2);
 			rcv_bytes += nb_elem;
@@ -938,6 +945,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	 * FIFO overflow and underflow management
 	 */
 	if (restart_dspi) {
+		//measure_time(true, drv_data->stat_spi_nbbytes_recv);
 		drv_data->is_reading = 0;
 		/* Here, we missed some data.
 		 * we need to reset the whole DSPI block to clear fifo */
@@ -966,8 +974,10 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 
 	/* Let's awake any sleeping process waiting on read() syscall */
 	drv_data->is_reading = 1;
-	if (wq_has_sleeper(&read_buf_wq))
-		wake_up_interruptible(&read_buf_wq);
+	/*if (wq_has_sleeper(&read_buf_wq))
+		wake_up_interruptible(&read_buf_wq);*/
+	trace_printk("wake up process\n");
+	wake_up_process(drv_data->kthread);
 
 	return IRQ_HANDLED;
 }
