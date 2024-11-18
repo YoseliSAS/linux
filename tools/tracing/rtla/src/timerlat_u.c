@@ -15,9 +15,15 @@
 #include <pthread.h>
 #include <sys/wait.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 
 #include "utils.h"
 #include "timerlat_u.h"
+
+static inline pid_t gettid(void)
+{
+	return syscall(SYS_gettid);
+}
 
 /*
  * This is the user-space main for the tool timerlatu/ threads.
