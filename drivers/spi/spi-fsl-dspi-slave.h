@@ -99,6 +99,8 @@ struct driver_data {
 	struct mutex lock;
 
 	int is_reading;
+
+	struct task_struct	*kthread;
 };
 
 /* Define ioctl commands */
