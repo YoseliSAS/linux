@@ -229,6 +229,8 @@ long parse_ns_duration(char *val)
 #  define __NR_sched_setattr	345
 # elif __loongarch__
 #  define __NR_sched_setattr	274
+#elif __m68k__
+# define __NR_sched_setattr	349
 # endif
 #endif
 

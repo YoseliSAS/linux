@@ -15,7 +15,7 @@ $(call allow-override,LD_SO_CONF_PATH,/etc/ld.so.conf.d/)
 $(call allow-override,LDCONFIG,ldconfig)
 export CC AR STRIP PKG_CONFIG LD_SO_CONF_PATH LDCONFIG
 
-FOPTS		:= -flto=auto -ffat-lto-objects -fexceptions -fstack-protector-strong	\
+FOPTS		:= -flto=auto -ffat-lto-objects -fexceptions \
 		-fasynchronous-unwind-tables -fstack-clash-protection
 WOPTS		:= -O -Wall -Werror=format-security -Wp,-D_FORTIFY_SOURCE=2		\
 		-Wp,-D_GLIBCXX_ASSERTIONS -Wno-maybe-uninitialized
