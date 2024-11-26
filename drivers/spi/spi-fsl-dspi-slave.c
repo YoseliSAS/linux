@@ -47,7 +47,6 @@
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/mutex.h>
-#include <linux/kfifo.h>
 #include <asm/mcfsim.h>
 #include <asm/mcfqspi.h>
 #include <asm/coldfire.h>
@@ -182,19 +181,8 @@ static uint8_t chrdev_is_open;
 /* Exclusive access to /dev entry */
 static DEFINE_MUTEX(chrdev_client_mutex);
 
-/* Use a Kernel FIFO for read/write operations from userspace */
-static DECLARE_KFIFO(rx_kfifo, unsigned char, SPISLAVE_MSG_FIFO_SIZE);
-static DECLARE_KFIFO(tx_kfifo, unsigned char, SPISLAVE_MSG_FIFO_SIZE);
-
 /* Use a Wait queue for userspace synchronisation on read() syscall */
 static DECLARE_WAIT_QUEUE_HEAD(read_buf_wq);
-
-static inline void kfifo_prepare(void)
-{
-	/* Flush all data in kfifo */
-	kfifo_reset(&rx_kfifo);
-	kfifo_reset(&tx_kfifo);
-}
 
 static inline void hwfifo_prepare(struct driver_data *drv_data)
 {
@@ -209,14 +197,13 @@ static inline int kfifo_tx_kfifo_to_hw(struct driver_data *drv_data)
 {
 	unsigned int nb_elem;
 	unsigned int total_sent = 0;
-	u16 out_data;
 
-	while ((nb_elem = kfifo_out(&tx_kfifo, (void *)&out_data, 2))) {
+	for (nb_elem = 0; nb_elem < SPISLAVE_MSG_FIFO_SIZE / 2; nb_elem += 1) {
 
-		*((volatile u32 *)drv_data->dspi_dtfr) = MCF_DSPI_DTFR_TXDATA(out_data);
+		*((volatile u32 *)drv_data->dspi_dtfr) = MCF_DSPI_DTFR_TXDATA(drv_data->mmap_buffer[nb_elem]);
 
-		total_sent += nb_elem;
-		drv_data->stat_spi_nbbytes_sent += nb_elem;
+		total_sent += 2;
+		drv_data->stat_spi_nbbytes_sent += 2;
 	}
 
 	return total_sent;
@@ -266,7 +253,7 @@ static volatile int s2tos0_eport_hasdata;
 static irqreturn_t s2tos0_eport_handler(int irq, void *dev_id)
 {
 	s2tos0_eport_hasdata = 1;
-	
+
 	wake_up(&s2tos0_eport_waitq);
 
 	return IRQ_HANDLED;
@@ -275,8 +262,6 @@ static irqreturn_t s2tos0_eport_handler(int irq, void *dev_id)
 /* File operations */
 static int s2tos0_eport_open(struct inode *inode, struct file *filp)
 {
-	struct cdev *cdev = inode->i_cdev;
-
 	s2tos0_eport_firstread = true;
 
 	return 0;
@@ -349,39 +334,6 @@ static const struct file_operations s2tos0_eport_fops = {
 static int s2tos0_eport_init(struct platform_device *pdev, struct class * klass)
 {
 	int retval;
-	uint8_t byte;
-	uint16_t word;
-
-#if 0
-	/* Pinmux: PAR_IRQ04 -> Primary */
-	byte = __raw_readb(MCFGPIO_PAR_IRQ0H);
-	byte = byte | 0x0c;
-	__raw_writeb(byte, MCFGPIO_PAR_IRQ0H);
-
-	/* IRQ4/PC4 in input mode */
-	__raw_writeb(__raw_readb(MCFGPIO_PDDR_C) & ~(1 << 4), MCFGPIO_PDDR_C);
-
-	/* Generate IRQ4 on rising and falling edges */
-	/* word = MCFEPORT_EPPAR;
-	word = word | MCFEPORT_EPPAR_EPPA4_RISING | MCFEPORT_EPPAR_EPPA4_FALLING;
-	MCFEPORT_EPPAR = word;*/
-	__raw_writew(__raw_readw(MCFEPORT_EPPAR) | MCFEPORT_EPPAR_EPPA4_RISING | MCFEPORT_EPPAR_EPPA4_FALLING, MCFEPORT_EPPAR);
-
-	/* Register IRQ4 handler */
-// 	static struct irqaction s2tos0_eport_irqaction = {
-// 	.name	 = "s2tos0-eportd",
-// #if !defined(DSPI_SLAVE_HARDIRQ_HANDLER)
-// 	.flags	 = 0,
-// #else
-// 	.flags	 = 0 | IRQF_NO_THREAD,
-// #endif
-// 	.handler = s2tos0_eport_handler,
-// 	.dev_id	 = NULL, /* set dynamically */
-// 	.thread  = NULL, /* set dynamically */
-// };
-// 	s2tos0_eport_irqaction.dev_id = 0;
-// 	retval = setup_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
-#endif
 
 	/* Register /dev/s2tos0 char device */
 	s2tos0_eport_major = register_chrdev(0, S2TOS0_EPORT_DEVICE_NAME, &s2tos0_eport_fops);
@@ -406,8 +358,10 @@ static int s2tos0_eport_init(struct platform_device *pdev, struct class * klass)
 	}
 
 	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING, "s2tos0-eportd", NULL);
-	if (retval < 0)
+	if (retval < 0) {
 		printk(KERN_ERR "Unable to attach EPORT interrupt: %d\n", retval);
+		goto register_irq_failed;
+	}
 
 	return 0;
 
@@ -415,7 +369,6 @@ device_create_failed:
 	unregister_chrdev(s2tos0_eport_major, S2TOS0_EPORT_DEVICE_NAME);
 
 register_chrdev_failed:
-	//remove_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
 	free_irq(M5441X_EPORT4_IRQ_VECTOR, NULL);
 
 register_irq_failed:
@@ -444,42 +397,29 @@ static void s2tos0_eport_exit(struct platform_device *pdev)
  {
 	static int count = 0;
 
-	if (chrdev_drvdata->is_reading == 1) {
-		stop_time = ktime_get();
-		diff_time = ktime_sub(stop_time, start_time);
-		diff_intermediate_time = ktime_sub(stop_time, intermediate_time);
-		min_time = diff_time < min_time ? diff_time : min_time;
-		max_time = diff_time > max_time ? diff_time : max_time;
-		min_intermediate_time = diff_intermediate_time < min_intermediate_time ? diff_intermediate_time : min_intermediate_time;
-		max_intermediate_time = diff_intermediate_time > max_intermediate_time ? diff_intermediate_time : max_intermediate_time;
-		count++;
-		if ((count == 400) || forced) {
-			/* start_time: IRQ, intermediate_time: ioctl response, stop_time: TX done */
-			//trace_printk("Received %llu bytes\n", bytes);
-			trace_printk("IRQ RX -> ioctl out - Min: %lld, Max: %lld, jitter: %lld\n",
-				ktime_to_ns(min_start_to_intermediate_time), ktime_to_ns(max_start_to_intermediate_time), ktime_to_ns(ktime_sub(max_start_to_intermediate_time, min_start_to_intermediate_time)));
-			trace_printk("ioctl out -> TX - Min: %lld, Max: %lld, jitter: %lld\n",
-				ktime_to_ns(min_intermediate_time), ktime_to_ns(max_intermediate_time), ktime_to_ns(ktime_sub(max_intermediate_time, min_intermediate_time)));
-			trace_printk("Complete path - Min: %lld, Max: %lld, jitter: %lld\n",
-				ktime_to_ns(min_time), ktime_to_ns(max_time), ktime_to_ns(ktime_sub(max_time, min_time)));
-			count = 0;
-		}
+	stop_time = ktime_get();
+	diff_time = ktime_sub(stop_time, start_time);
+	diff_intermediate_time = ktime_sub(stop_time, intermediate_time);
+	min_time = diff_time < min_time ? diff_time : min_time;
+	max_time = diff_time > max_time ? diff_time : max_time;
+	min_intermediate_time = diff_intermediate_time < min_intermediate_time ? diff_intermediate_time : min_intermediate_time;
+	max_intermediate_time = diff_intermediate_time > max_intermediate_time ? diff_intermediate_time : max_intermediate_time;
+	count++;
+	if ((count == 400) || forced) {
+		/* start_time: IRQ, intermediate_time: ioctl response, stop_time: TX done */
+		//trace_printk("Received %llu bytes\n", bytes);
+		trace_printk("IRQ RX -> ioctl out - Min: %lld, Max: %lld, jitter: %lld\n",
+			ktime_to_ns(min_start_to_intermediate_time), ktime_to_ns(max_start_to_intermediate_time), ktime_to_ns(ktime_sub(max_start_to_intermediate_time, min_start_to_intermediate_time)));
+		trace_printk("ioctl out -> TX - Min: %lld, Max: %lld, jitter: %lld\n",
+			ktime_to_ns(min_intermediate_time), ktime_to_ns(max_intermediate_time), ktime_to_ns(ktime_sub(max_intermediate_time, min_intermediate_time)));
+		trace_printk("Complete path - Min: %lld, Max: %lld, jitter: %lld\n",
+			ktime_to_ns(min_time), ktime_to_ns(max_time), ktime_to_ns(ktime_sub(max_time, min_time)));
+		count = 0;
 	}
  }
 
 static int chrdev_device_open(struct inode *inode, struct file *filp)
 {
-#if !defined(DSPI_SLAVE_HARDIRQ_HANDLER) && (defined(CONFIG_PREEMPT_RTB) || defined(CONFIG_PREEMPT_RT_FULL))
-	int status;
-
-	/* First, we set the IRQ handler to RT prio */
-	status = sched_setscheduler(dspi_irqaction.thread,
-		SCHED_FIFO, &dspi_schedparam);
-
-	if (status < 0)
-		printk (KERN_ERR "DSPI: *WARNING* Cannot set RT priority to IRQ handler\n");
-#endif
-
 	/* Ensure that only one process has access to our device
 	 * at any one time */
 	if (!mutex_trylock(&chrdev_client_mutex)) {
@@ -497,6 +437,10 @@ static int chrdev_device_open(struct inode *inode, struct file *filp)
 
 	chrdev_is_open = true;
 
+	stream_open(inode, filp);
+
+	filp->private_data = inode->i_private;
+
 	return 0;
 }
 
@@ -505,6 +449,7 @@ static int chrdev_device_close(struct inode *inode, struct file *filp)
 	chrdev_is_open = false;
 	chrdev_drvdata->task_user = NULL;
 
+	complete(&chrdev_drvdata->read_complete);
 	mutex_unlock(&chrdev_client_mutex);
 	return 0;
 }
@@ -514,8 +459,8 @@ static ssize_t chrdev_device_read(struct file *filp,
 {
 	int status;
 	unsigned int nb_bytes;
-	signed long timeout = 1;
-	//DEFINE_WAIT(wait);
+
+	reinit_completion(&chrdev_drvdata->read_complete);
 
 	/* Buffer size must be at least equal to kfifo size */
 	if (length < SPISLAVE_MSG_FIFO_SIZE) {
@@ -530,48 +475,30 @@ static ssize_t chrdev_device_read(struct file *filp,
 	}
 
 	/* If RX Fifo is not full, we block the caller */
-	while (!kfifo_is_full(&rx_kfifo)) {
-		chrdev_drvdata->kthread = current;
-		set_current_state(TASK_INTERRUPTIBLE);
-		trace_printk("wait for data\n");
-		//prepare_to_wait(&read_buf_wq, &wait, TASK_INTERRUPTIBLE);
-
-		if (chrdev_drvdata->stream_restarted) {
-			chrdev_drvdata->stream_restarted = false;
-			set_current_state(TASK_RUNNING);
-			//finish_wait(&read_buf_wq, &wait);
-
-			//trace_printk("Stream restarted\n");
-			/* Blocking read() return 0 after signal */
+	status = wait_for_completion_timeout(&chrdev_drvdata->read_complete, msecs_to_jiffies(ktime_to_ms(read_fifo_timeout)));
+	switch(chrdev_drvdata->state) {
+		case DSPI_SLAVE_STATE_IDLE:
+		case DSPI_SLAVE_STATE_RX:
+			break;
+		case DSPI_SLAVE_STATE_RESTART:
+			/* If we are in restart state, we return 0 */
+			if (chrdev_drvdata->stream_restarted)
+				chrdev_drvdata->stream_restarted = false;
 			return 0;
-
-			// /* Continue the blocking read() after signal: */
-			// return -ERESTARTSYS;
-		}
-
-
-		/* Only schedule if kfifo is empty. Else, it means SPI data are incoming.
-		 * In that second case, we busy loop to avoid latency in context switch */
-		if (kfifo_is_empty(&rx_kfifo) /* && kfifo_len(&rx_kfifo) < length */) {
-			//timeout = schedule_hrtimeout(&read_fifo_timeout, HRTIMER_MODE_REL);
-			timeout = schedule_timeout(msecs_to_jiffies(ktime_to_ms(read_fifo_timeout)));
-		}
-
-		if (! timeout) {
-#ifndef CONFIG_TRACING
-			printk_once(KERN_ERR "DSPI: timeout occured on read() syscall\n");
-#else
-			trace_printk("Timeout on read() syscall\n");
-#endif
-
-			//finish_wait(&read_buf_wq, &wait);
-
-			/* Unblock application with empty buffer */
-			return -EAGAIN;
-		}
+		default:
+			trace_printk("%s: Wrong state %d\n", __func__, chrdev_drvdata->state);
+			/* Blocking read() return 0 after signal */
 	}
 
-	//finish_wait(&read_buf_wq, &wait);
+	if (status == 0) {
+#ifndef CONFIG_TRACING
+		printk_once(KERN_ERR "DSPI: timeout occured on read() syscall\n");
+#else
+		trace_printk("Timeout on read() syscall\n");
+#endif
+		return -EAGAIN;
+	}
+
 #if 0
 	intermediate_time = ktime_get();
 	diff_start_to_intermediate_time = ktime_sub(intermediate_time, start_time);
@@ -579,9 +506,13 @@ static ssize_t chrdev_device_read(struct file *filp,
 	max_start_to_intermediate_time = diff_start_to_intermediate_time > max_start_to_intermediate_time ? diff_start_to_intermediate_time : max_start_to_intermediate_time;
 #endif
 	/* Data are ready, now we send them to the caller */
-	status = kfifo_to_user(&rx_kfifo, buffer, length, &nb_bytes);
-	trace_printk("Sent back %d bytes to user, status: %d\n", nb_bytes, status);
+	//status = kfifo_to_user(&rx_kfifo, buffer, length, &nb_bytes);
+	nb_bytes = SPISLAVE_MSG_FIFO_SIZE;
+	status = __copy_to_user_inatomic(buffer, chrdev_drvdata->mmap_buffer, nb_bytes);
 
+	chrdev_drvdata->state = DSPI_SLAVE_STATE_RX_DONE;
+
+	trace_printk("Copied %d bytes to user\n", status ? status : nb_bytes);
 	return status ? status : nb_bytes;
 }
 
@@ -592,7 +523,7 @@ static ssize_t chrdev_device_write(struct file *filp,
 	unsigned int nb_bytes;
 
 	/* Check length is SPISLAVE_MSG_FIFO_SIZE */
-	if (length != SPISLAVE_MSG_FIFO_SIZE) {
+	if (unlikely(length != SPISLAVE_MSG_FIFO_SIZE)) {
 		return -EINVAL;
 	}
 
@@ -601,56 +532,54 @@ static ssize_t chrdev_device_write(struct file *filp,
 	 * write() call sequence is not respected */
 	if (MCF_DSPI_DSR_GET_TXCTR(*(volatile u32 *)chrdev_drvdata->dspi_sr)) {
 
-		//trace_printk("HW TX fifo not empty !\n");
+		trace_printk("HW TX fifo not empty !\n");
 		/* printk (KERN_DEBUG "DSPI: HW TX Fifo is not empty\n"); */
 		return -EIO;
 	}
 
-	/* This should never happen */
-	if (!kfifo_is_empty(&tx_kfifo)) {
-		//trace_printk("SW TX fifo no empty !\n");
-		/* printk (KERN_DEBUG "DSPI: tx_kfifo is not empty\n"); */
-		return -EBUSY;
-	}
+	chrdev_drvdata->state = DSPI_SLAVE_STATE_TX;
 
 	/* Push whole buffer in TX fifo */
-	status = kfifo_from_user(&tx_kfifo, buffer, length, &nb_bytes);
+	status = __copy_from_user_inatomic(chrdev_drvdata->mmap_buffer, buffer, length);
+	//status = kfifo_from_user(&tx_kfifo, buffer, length, &nb_bytes);
 
-	//up(&rw_lock);
 	/* If HW TX FIFO is empty, we transfer datas from
 	 * kfifo to HW FIFO. */
-	if (!status)
+	if (status == 0)
 		nb_bytes = kfifo_tx_kfifo_to_hw(chrdev_drvdata);
 
 	//measure_time(false, chrdev_drvdata->stat_spi_nbbytes_recv);
 
 	trace_printk("Write %d bytes to HW FIFO\n", nb_bytes);
-	chrdev_drvdata->is_reading = 0;
+	chrdev_drvdata->state = DSPI_SLAVE_STATE_IDLE;
 	return status ? status : nb_bytes;
 }
 
-static int chrdev_device_fsync (struct file *filp, loff_t start, loff_t end, int datasync)
+static void sync_spi_hw(void)
 {
+	read_fifo_timeout = ktime_set(5, 0);
+
+	/* Disable the DSPI IP */
 	chrdev_drvdata->cur_chip->mcr.halt = 1;
 	dspi_setup_chip(chrdev_drvdata);
-
-	/* Reset kfifo */
-	kfifo_prepare();
 
 	/* Reset HW TX & HW RX fifo */
 	hwfifo_prepare(chrdev_drvdata);
 
+	/* Enable the DSPI IP */
 	chrdev_drvdata->cur_chip->mcr.halt = 0;
 	dspi_setup_chip(chrdev_drvdata);
+}
 
-	chrdev_drvdata->is_reading = 0;
+static int chrdev_device_fsync (struct file *filp, loff_t start, loff_t end, int datasync)
+{
+	sync_spi_hw();
 
 	return 0;
 }
 
 static int chrdev_device_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-	unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
 	unsigned long size = vma->vm_end - vma->vm_start;
 	unsigned long pfn;
 
@@ -665,55 +594,6 @@ static int chrdev_device_mmap(struct file *filp, struct vm_area_struct *vma)
 	return 0;
 }
 
-static long chrdev_device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-{
-	signed long timeout = 1;
-	int ret = 0;
-
-	switch (cmd) {
-	case SPIRT_IOCTL_GET_FRAME:
-#if 0
-		DEFINE_WAIT(wait);
-		if (down_trylock(&rw_lock) == 0) {
-			trace_printk("Get frame ioctl, wait for data\n");
-			/* Data are ready, now we send them to the caller */
-			prepare_to_wait(&read_buf_wq, &wait, TASK_INTERRUPTIBLE);
-
-			if (chrdev_drvdata->stream_restarted) {
-				chrdev_drvdata->stream_restarted = false;
-				finish_wait(&read_buf_wq, &wait);
-
-				//trace_printk("Stream restarted\n");
-				/* Blocking read() return 0 after signal */
-				ret = 0;
-			}
-
-			timeout = schedule_hrtimeout(&read_fifo_timeout, HRTIMER_MODE_REL);
-			if (!timeout) {
-		#ifndef CONFIG_TRACING
-				printk_once(KERN_ERR "DSPI: timeout occured on read() syscall\n");
-		#else
-				//trace_printk("Timeout on read() syscall\n");
-		#endif
-
-				finish_wait(&read_buf_wq, &wait);
-
-				/* Unblock application with empty buffer */
-				ret = -EAGAIN;
-			}
-		}
-#endif
-		break;
-	case SPIRT_IOCTL_SET_FRAME:
-		break;
-	default:
-		ret = -ENOTTY;
-		break;
-	}
-
-	return ret;
-}
-
 static struct file_operations chrdev_fops = {
 	.read = chrdev_device_read,
 	.write = chrdev_device_write,
@@ -721,7 +601,6 @@ static struct file_operations chrdev_fops = {
 	.release = chrdev_device_close,
 	.fsync = chrdev_device_fsync,
 	.mmap = chrdev_device_mmap,
-	.unlocked_ioctl = chrdev_device_ioctl,
 };
 
 /****************************************************************************/
@@ -852,12 +731,13 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	u8 restart_dspi = false;
 	struct driver_data *drv_data = (struct driver_data *)dev_id;
 	struct device * dev = &drv_data->pdev->dev;
-	volatile u32 irq_status = *((volatile u32 *)drv_data->dspi_sr);
-	unsigned char nb_elem;
+	volatile u32 irq_status = __raw_readl(drv_data->dspi_sr);
 
 	/* Clear almost all flags immediately */
 	*((volatile u32 *)drv_data->dspi_sr) |=
 		(MCF_DSPI_DSR_RFOF | MCF_DSPI_DSR_TFUF);
+
+	trace_printk("Enter dspi_interrupt\n");
 
 	read_fifo_timeout = ktime_set(0, 5 * NSEC_PER_MSEC);
 
@@ -871,7 +751,6 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 #else
 		trace_printk("RX FIFO overflow\n");
 #endif
-
 		restart_dspi = true;
 	}
 
@@ -884,9 +763,8 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 			"DSPI: dspi-slave: TX FIFO underflow occurs (occur. #%llu) !\n",
 			drv_data->stat_tx_hwfifo_underflow);
 #else
-		trace_printk("TX FIFO overflow\n");
+		trace_printk("TX FIFO underflow\n");
 #endif
-
 		restart_dspi = true;
 	}
 
@@ -903,81 +781,51 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 		start_time = ktime_get();
 		/* When we enter here, we have data in hardware RX FIFO */
 		u16 in_data;
-		u32 rcv_bytes = 0;
 		int i = 0;
 
 		/* While datas are available in HW RX FIFO, we drain it. */
-		while (*((volatile u32 *)drv_data->dspi_sr) & MCF_DSPI_DSR_RFDF) {
+		while (__raw_readl(drv_data->dspi_sr) & MCF_DSPI_DSR_RFDF) {
 
 			/* We pop one element from the hardware RX FIFO */
 			//in_data = MCF_DSPI_DRFR_RXDATA(*drv_data->dspi_drfr);
 			//in_data = __raw_readw(drv_data->dspi_drfr);
 
 			/* Copy to the mmap'ed buffer */
-			drv_data->mmap_buffer[i] = __raw_readw(drv_data->dspi_drfr);
-			i++;
+			in_data = MCF_DSPI_DRFR_RXDATA(__raw_readl(drv_data->dspi_drfr));
+			drv_data->mmap_buffer[i] = in_data;
 
 			/* RFDF must be cleared only after the DSPI_POPR
 			 * register is read. */
 			//*((volatile u32 *)drv_data->dspi_sr) |= MCF_DSPI_DSR_RFDF;
-			__raw_writew(__raw_readb(drv_data->dspi_sr) | MCF_DSPI_DSR_RFDF, drv_data->dspi_sr);
+			__raw_writel(__raw_readl(drv_data->dspi_sr) | MCF_DSPI_DSR_RFDF, drv_data->dspi_sr);
 
 			/* Increment stat incoming bytes counter */
 			drv_data->stat_spi_nbbytes_recv += 2;
-#if 1
-			/* Finally, we push received data into rx_kfifo */
-			nb_elem = kfifo_in(&rx_kfifo, (void *)&in_data, 2);
-			rcv_bytes += nb_elem;
-
-			if (!nb_elem) {
-				/* RX kfifo is full : this means userspace
-				 * application is not fast enought to pop value
-				 */
-				//trace_printk("Kfifo FULL !\n");
-				drv_data->stat_rx_kfifo_overflow += 1;
-				restart_dspi = true;
-			}
-#endif
+			i++;
 		}
+		drv_data->state = DSPI_SLAVE_STATE_RX;
 	}
 
 	/*
 	 * FIFO overflow and underflow management
 	 */
 	if (restart_dspi) {
-		//measure_time(true, drv_data->stat_spi_nbbytes_recv);
-		drv_data->is_reading = 0;
 		/* Here, we missed some data.
 		 * we need to reset the whole DSPI block to clear fifo */
-		//trace_printk("Restart FIFO\n");
+		trace_printk("Restart FIFO\n");
+
+		drv_data->state = DSPI_SLAVE_STATE_RESTART;
 
 		/* We inform S12X not to send a bitstream anymore */
 		sync_s0tos2_set(false);
 
-		/* Disable the DSPI IP */
-		drv_data->cur_chip->mcr.halt = 1;
-		dspi_setup_chip(drv_data);
-
-		/* Reset kfifo */
-		kfifo_prepare();
-
-		/* Reset HW TX & HW RX fifo */
-		hwfifo_prepare(drv_data);
-
-		/* Enable the DSPI IP */
-		drv_data->cur_chip->mcr.halt = 0;
-		dspi_setup_chip(drv_data);
-
+		sync_spi_hw();
 		/* We will unblock application read() with a buffer of size 0 */
 		drv_data->stream_restarted = true;
 	}
 
 	/* Let's awake any sleeping process waiting on read() syscall */
-	drv_data->is_reading = 1;
-	/*if (wq_has_sleeper(&read_buf_wq))
-		wake_up_interruptible(&read_buf_wq);*/
-	trace_printk("wake up process\n");
-	wake_up_process(drv_data->kthread);
+	complete(&drv_data->read_complete);
 
 	return IRQ_HANDLED;
 }
@@ -1047,19 +895,14 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	struct resource *memory_resource;
 	int irq;
 	int status = 0;
-	struct sched_param sp;
-	
+
 	platform_info = (struct coldfire_spi_slave *)dev->platform_data;
-	
+
 	drv_data = kzalloc(sizeof(struct driver_data), GFP_KERNEL);
 	if (!drv_data)
 		return -ENOMEM;
 
-	/* Initialize mutex and kfifo here */
 	mutex_init(&chrdev_client_mutex);
-	INIT_KFIFO(rx_kfifo);
-	INIT_KFIFO(tx_kfifo);
-	kfifo_prepare();
 
 	/* Global variable init */
 	chrdev_is_open = false;
@@ -1104,6 +947,9 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	}
 	drv_data->int_mr = (void *)memory_resource->start;
 
+	init_completion(&drv_data->read_complete);
+	drv_data->state = DSPI_SLAVE_STATE_IDLE;
+
 	/*
 	 * Sync signal configuration
 	 */
@@ -1111,26 +957,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 
 	/* We inform S12X not to send a bitstream */
 	sync_s0tos2_set(false);
-
-	/*
-	 * Register IRQ handler
-	 */
-	    //     irq = platform_info->irq_vector;
-
-        // dspi_irqaction.dev_id = drv_data;
-        // status = setup_irq(platform_info->irq_vector, &dspi_irqaction);
-        // if (status < 0) {
-        //         dev_err(&pdev->dev,
-        //                 "Unable to attach ColdFire DSPI interrupt\n");
-        //         goto out_error_after_drv_data_alloc;
-        // }
-
-        // *drv_data->int_icr = platform_info->irq_lp;
-        // *drv_data->int_mr &= ~platform_info->irq_mask;
-        // drv_data->stream_restarted = false;
-
-        // /* Chip select is always PCS0 in slave mode */
-        // drv_data->cs = 0;
 
 	irq = platform_info->irq_vector;
 	status = request_irq(irq, dspi_interrupt, 0, "dspi-slave", drv_data);
@@ -1143,7 +969,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	*drv_data->int_mr &= ~platform_info->irq_mask;
 	drv_data->stream_restarted = false;
 
-
 	/* Prepare a buffer to export with mmap */
 	drv_data->mmap_buffer = devm_kmalloc(dev, 2*SPISLAVE_MSG_FIFO_SIZE, GFP_KERNEL);
 	if (!drv_data->mmap_buffer) {
@@ -1155,11 +980,8 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 
 	stat_reset_counters(drv_data);
 
-	drv_data->is_reading = 0;
-
 	/* Chip select is always PCS0 in slave mode */
 	drv_data->cs = 0;
-
 #if 0
 	/*
 	 * Statistics
