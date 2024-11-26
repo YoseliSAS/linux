@@ -38,6 +38,7 @@
 #define MII_DP83822_IOCTRL2	0x463
 #define MII_DP83822_GENCFG	0x465
 #define MII_DP83822_SOR1	0x467
+#define MII_DP83822_SOR2	0x468
 
 /* DP83826 specific registers */
 #define MII_DP83826_VOD_CFG1	0x30b
@@ -950,6 +951,29 @@ static int dp83822_read_straps(struct phy_device *phydev)
 	return 0;
 }
 
+static int dp83826_read_straps(struct phy_device *phydev)
+{
+	int val;
+
+	val = phy_read_mmd(phydev, MDIO_MMD_VEND2, MII_DP83822_SOR1);
+	if (val < 0)
+		return val;
+
+	printk("STS1 strap register: 0x%04x\n", val);
+
+	val = phy_read_mmd(phydev, MDIO_MMD_VEND2, MII_DP83822_SOR2);
+	if (val < 0)
+		return val;
+
+	printk("STS2 strap register: 0x%04x\n", val);
+
+	phydev->autoneg = AUTONEG_DISABLE;
+	phydev->duplex = DUPLEX_FULL;
+	phydev->speed = SPEED_100;
+
+	return 0;
+}
+
 static int dp8382x_probe(struct phy_device *phydev)
 {
 	struct dp83822_private *dp83822;
@@ -996,6 +1020,10 @@ static int dp83826_probe(struct phy_device *phydev)
 	int ret;
 
 	ret = dp8382x_probe(phydev);
+	if (ret)
+		return ret;
+
+	ret = dp83826_read_straps(phydev);
 	if (ret)
 		return ret;
 
