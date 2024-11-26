@@ -99,17 +99,17 @@ static struct flash_platform_data dlc_next_spi_flash_data = {
 	.name = "Micron mt25ql01G SPI Flash chip",
 	.parts = dlc_next_nor_partitions,
 	.nr_parts = ARRAY_SIZE(dlc_next_nor_partitions),
-	.type = "mt25ql01G",
+	.type = "w25q01jv",
 };
 
 static struct spi_board_info dlc_next_board_info[] __initdata = {
 	{
-		.modalias = "m25p80",
-		.max_speed_hz = 5000000,
+		.modalias = "spi-nor",
+		.max_speed_hz = 50000000,
 		.bus_num = 0,
-		.chip_select = 1,
+		.chip_select = 0,
 		.platform_data = &dlc_next_spi_flash_data,
-		.mode = SPI_MODE_3,
+		.mode = SPI_MODE_0,
 	}
 };
 
@@ -191,6 +191,7 @@ static struct fsl_dspi_platform_data dspi_spi0_info = {
 	.bus_num = 0,
 	.sck_cs_delay = 100,
 	.cs_sck_delay = 100,
+	.bits_per_word = 8,
 };
 
 static struct resource dspi_spi0_resource[] = {
@@ -221,42 +222,6 @@ static struct platform_device dspi_spi0_device = {
 	},
 };
 
-#if 0
-/* SPI controller data, SPI (1) as slave */
-static struct fsl_dspi_platform_data dspi_spi1_info = {
-	.cs_num = 4,
-	.bus_num = 1,
-	.sck_cs_delay = 100,
-	.cs_sck_delay = 100,
-	.slave = true,
-};
-
-static struct resource dspi_spi1_resource[] = {
-	[0] = {
-		.start = MCFDSPI_BASE1,
-		.end   = MCFDSPI_BASE1 + 0xFF,
-		.flags = IORESOURCE_MEM,
-		},
-	[1] = {
-		.start = MCF_IRQ_DSPI1,
-		.end   = MCF_IRQ_DSPI1,
-		.flags = IORESOURCE_IRQ,
-	},
-};
-
-/* SPI controller, id = bus number */
-static struct platform_device dspi_spi1_device = {
-	.name = "fsl-dspi",
-	.id = 1,
-	.num_resources = ARRAY_SIZE(dspi_spi1_resource),
-	.resource = dspi_spi1_resource,
-	.dev = {
-		.platform_data = &dspi_spi1_info,
-		.dma_mask = &dlc_next_dspi_mask,
-		.coherent_dma_mask = DMA_BIT_MASK(32),
-	},
-};
-#else
 static struct coldfire_spi_slave spi1_slave_info = {
 	.bus_num = 1,
 	.irq_source = MCFINT1_DSPI1,
@@ -307,7 +272,6 @@ static struct platform_device dspi_spi1_device = {
 		.platform_data = &spi1_slave_info,
 	}
 };
-#endif
 
 static struct platform_device *dlc_next_devices[] __initdata = {
 	&mcf_uart2,

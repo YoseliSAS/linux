@@ -1081,6 +1081,7 @@ static int dspi_setup(struct spi_device *spi)
 	} else {
 		cs_sck_delay = pdata->cs_sck_delay;
 		sck_cs_delay = pdata->sck_cs_delay;
+		spi->bits_per_word = pdata->bits_per_word;
 	}
 
 	/* Since tCSC and tASC apply to continuous transfers too, avoid SCK
@@ -1357,7 +1358,6 @@ static int dspi_probe(struct platform_device *pdev)
 		/* Only Coldfire uses platform data */
 		dspi->devtype_data = &devtype_data[MCF5441X];
 		big_endian = true;
-		ctlr->slave = pdata->slave;
 	} else {
 
 		ret = of_property_read_u32(np, "spi-num-chipselects", &cs_num);
@@ -1463,12 +1463,9 @@ poll_mode:
 		}
 	}
 
-#ifndef CONFIG_M5441x
 	ctlr->max_speed_hz =
 		clk_get_rate(dspi->clk) / dspi->devtype_data->max_clock_factor;
-#else
-	ctlr->max_speed_hz = 50000000;
-#endif
+
 	if (dspi->devtype_data->trans_mode != DSPI_DMA_MODE)
 		ctlr->ptp_sts_supported = true;
 
