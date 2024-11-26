@@ -53,6 +53,13 @@ struct chip_data {
 	};
 };
 
+typedef enum {
+	DSPI_SLAVE_STATE_IDLE,
+	DSPI_SLAVE_STATE_RX,
+	DSPI_SLAVE_STATE_RX_DONE,
+	DSPI_SLAVE_STATE_TX,
+	DSPI_SLAVE_STATE_RESTART,
+} dspi_slave_state_t;
 
 struct driver_data {
 	/* Driver model hookup */
@@ -98,9 +105,10 @@ struct driver_data {
 	/* locking */
 	struct mutex lock;
 
-	int is_reading;
+	struct completion read_complete;
 
 	struct task_struct	*kthread;
+	dspi_slave_state_t	state;
 };
 
 /* Define ioctl commands */
