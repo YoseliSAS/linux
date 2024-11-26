@@ -300,8 +300,8 @@ config M548x
 
 config M5441x
 	bool "MCF5441x"
-	select COLDFIRE_PIT_TIMER
 	select MMU_COLDFIRE if MMU
+	select COLDFIRE_DMA_TIMERS
 	select HAVE_CACHE_CB
 	help
 	  Freescale Coldfire 54410/54415/54416/54417/54418 processor support.
@@ -328,6 +328,10 @@ config COLDFIRE_TIMERS
 config COLDFIRE_SLTIMERS
 	bool
 	select LEGACY_TIMER_TICK
+
+config COLDFIRE_DMA_TIMERS
+	bool
+	select GENERIC_SCHED_CLOCK
 
 endif # COLDFIRE
 
@@ -559,3 +563,7 @@ config M68K_NONCOHERENT_DMA
 	bool
 	default y
 	depends on HAS_DMA && !COLDFIRE_COHERENT_DMA
+
+config SCHED_HRTICK
+	depends on M5441x
+	def_bool HIGH_RES_TIMERS
