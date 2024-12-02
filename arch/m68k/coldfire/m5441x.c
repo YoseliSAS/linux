@@ -153,8 +153,7 @@ static struct clk * const enable_clks[] __initconst = {
 	&__clk_0_23, /* dspi.0 */
 	&__clk_0_26, /* uart2 */
 	&__clk_1_26, /* uart6 */
-	&__clk_0_30, /* tmr.2 */
-	&__clk_0_31, /* tmr.3 */
+	&__clk_0_28, /* tmr.0 */
 
 	&__clk_0_33, /* pit.1 */
 	&__clk_0_37, /* eport */
@@ -177,8 +176,9 @@ static struct clk * const disable_clks[] __initconst = {
 	&__clk_0_24, /* uart0 */
 	&__clk_0_25, /* uart1 */
 	&__clk_0_27, /* uart3 */
-	&__clk_0_28, /* tmr.0 */
 	&__clk_0_29, /* tmr.1 */
+	&__clk_0_30, /* tmr.2 */
+	&__clk_0_31, /* tmr.3 */
 	&__clk_0_32, /* pit.0 */
 	&__clk_0_34, /* pit.2 */
 	&__clk_0_35, /* pit.3 */
