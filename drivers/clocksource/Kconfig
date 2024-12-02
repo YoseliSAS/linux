@@ -782,4 +782,11 @@ config NXP_STM_TIMER
           Enables the support for NXP System Timer Module found in the
           s32g NXP platform series.
 
+config COLDFIRE_DMA_TIMERS
+	bool "Coldfire DMA timer clocksource"
+	depends on M5441x
+	select GENERIC_SCHED_CLOCK
+	help
+	  Enables support for the Coldfire DMA timers as a clocksource.
+
 endmenu
