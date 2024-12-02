@@ -61,6 +61,12 @@ typedef enum {
 	DSPI_SLAVE_STATE_RESTART,
 } dspi_slave_state_t;
 
+struct dspi_slave_perf {
+	ktime_t irq_received;
+	ktime_t frame_sent;
+	u64 frame_number;
+};
+
 struct driver_data {
 	/* Driver model hookup */
 	struct platform_device *pdev;
@@ -109,6 +115,12 @@ struct driver_data {
 
 	struct task_struct	*kthread;
 	dspi_slave_state_t	state;
+
+	/* Add time measurement variables */
+	struct dspi_slave_perf frame_perf;
+	ktime_t average_frame_time;
+	ktime_t min_frame_time;
+	ktime_t max_frame_time;
 };
 
 /* Define ioctl commands */

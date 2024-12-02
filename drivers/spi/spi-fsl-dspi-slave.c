@@ -69,20 +69,6 @@
 
 /****************************************************************************/
 
-/* Add a few things to mesure time */
-static ktime_t start_time;
-static ktime_t stop_time;
-static ktime_t min_time = KTIME_MAX;
-static ktime_t max_time = 0;
-static ktime_t diff_time;
-static ktime_t intermediate_time;
-static ktime_t diff_intermediate_time;
-static ktime_t min_intermediate_time = KTIME_MAX;
-static ktime_t max_intermediate_time = 0;
-static ktime_t min_start_to_intermediate_time = KTIME_MAX;
-static ktime_t max_start_to_intermediate_time = 0;
-static ktime_t diff_start_to_intermediate_time;
-
 /*
  * Driver static configurations
  */
@@ -108,9 +94,6 @@ static ktime_t read_fifo_timeout = 5ULL * NSEC_PER_SEC;
 
 static inline void sync_s0tos2_set(u8 val)
 {
-	max_time = 0;
-	min_time = KTIME_MAX;
-
 	trace_printk("DSPI: sync_s0tos2 = %s\n", val ? "0" : "1");
 #if 1
 	/* GPIOG3 output mode */
@@ -198,6 +181,7 @@ static inline int kfifo_tx_kfifo_to_hw(struct driver_data *drv_data)
 	unsigned int nb_elem;
 	unsigned int total_sent = 0;
 
+	//trace_printk("send %04x\n", drv_data->mmap_buffer[0]);
 	for (nb_elem = 0; nb_elem < SPISLAVE_MSG_FIFO_SIZE / 2; nb_elem += 1) {
 
 		*((volatile u32 *)drv_data->dspi_dtfr) = MCF_DSPI_DTFR_TXDATA(drv_data->mmap_buffer[nb_elem]);
@@ -205,7 +189,21 @@ static inline int kfifo_tx_kfifo_to_hw(struct driver_data *drv_data)
 		total_sent += 2;
 		drv_data->stat_spi_nbbytes_sent += 2;
 	}
+#if 0
+	/* Busy wait for maximum 1.5ms */
+	ktime_t start = ktime_get();
+	int i = 0;
+	while ((__raw_readl(chrdev_drvdata->dspi_sr) & MCF_DSPI_DSR_TCF)  != 0) {
+		udelay(100);
+		i++;
+		if (i > 15) {
+			trace_printk(KERN_ERR "DSPI: Timeout on TX FIFO flush\n");
+			break;
+		}
+	}
 
+	trace_printk("TX FIFO flushed in %lld us\n", ktime_to_us(ktime_sub(ktime_get(), start)));
+#endif
 	return total_sent;
 }
 
@@ -393,30 +391,43 @@ static void s2tos0_eport_exit(struct platform_device *pdev)
  * /dev callbacks
  */
 
- static void measure_time(bool forced, unsigned long long bytes)
+ static void measure_time(void)
  {
 	static int count = 0;
 
-	stop_time = ktime_get();
-	diff_time = ktime_sub(stop_time, start_time);
-	diff_intermediate_time = ktime_sub(stop_time, intermediate_time);
-	min_time = diff_time < min_time ? diff_time : min_time;
-	max_time = diff_time > max_time ? diff_time : max_time;
-	min_intermediate_time = diff_intermediate_time < min_intermediate_time ? diff_intermediate_time : min_intermediate_time;
-	max_intermediate_time = diff_intermediate_time > max_intermediate_time ? diff_intermediate_time : max_intermediate_time;
+	chrdev_drvdata->frame_perf.frame_sent = ktime_get();
+	ktime_t diff = ktime_sub(chrdev_drvdata->frame_perf.frame_sent, chrdev_drvdata->frame_perf.irq_received);
+	chrdev_drvdata->average_frame_time += diff;
+	chrdev_drvdata->min_frame_time = diff < chrdev_drvdata->min_frame_time ? diff : chrdev_drvdata->min_frame_time;
+	chrdev_drvdata->max_frame_time = diff > chrdev_drvdata->max_frame_time ? diff : chrdev_drvdata->max_frame_time;
+
 	count++;
-	if ((count == 400) || forced) {
-		/* start_time: IRQ, intermediate_time: ioctl response, stop_time: TX done */
-		//trace_printk("Received %llu bytes\n", bytes);
-		trace_printk("IRQ RX -> ioctl out - Min: %lld, Max: %lld, jitter: %lld\n",
-			ktime_to_ns(min_start_to_intermediate_time), ktime_to_ns(max_start_to_intermediate_time), ktime_to_ns(ktime_sub(max_start_to_intermediate_time, min_start_to_intermediate_time)));
-		trace_printk("ioctl out -> TX - Min: %lld, Max: %lld, jitter: %lld\n",
-			ktime_to_ns(min_intermediate_time), ktime_to_ns(max_intermediate_time), ktime_to_ns(ktime_sub(max_intermediate_time, min_intermediate_time)));
-		trace_printk("Complete path - Min: %lld, Max: %lld, jitter: %lld\n",
-			ktime_to_ns(min_time), ktime_to_ns(max_time), ktime_to_ns(ktime_sub(max_time, min_time)));
+	if (count >= 512) {
+		/* Display in the cyclictest form: Min:    364 Avg:  761 Max:    2629 */
+		trace_printk("Min: %5lld Avg: %5lld Max: %5lld\n",
+			ktime_to_us(chrdev_drvdata->min_frame_time),
+			ktime_to_us(chrdev_drvdata->average_frame_time >> 9),
+			ktime_to_us(chrdev_drvdata->max_frame_time));
+		chrdev_drvdata->average_frame_time = 0;
 		count = 0;
 	}
- }
+}
+
+static void sync_spi_hw(void)
+{
+	read_fifo_timeout = ktime_set(5, 0);
+
+	/* Disable the DSPI IP */
+	chrdev_drvdata->cur_chip->mcr.halt = 1;
+	dspi_setup_chip(chrdev_drvdata);
+
+	/* Reset HW TX & HW RX fifo */
+	hwfifo_prepare(chrdev_drvdata);
+
+	/* Enable the DSPI IP */
+	chrdev_drvdata->cur_chip->mcr.halt = 0;
+	dspi_setup_chip(chrdev_drvdata);
+}
 
 static int chrdev_device_open(struct inode *inode, struct file *filp)
 {
@@ -461,6 +472,10 @@ static ssize_t chrdev_device_read(struct file *filp,
 	unsigned int nb_bytes;
 
 	reinit_completion(&chrdev_drvdata->read_complete);
+	//trace_printk("Wait for next frame\n");
+	if (chrdev_drvdata->frame_perf.frame_number != 0) {
+		measure_time();
+	}
 
 	/* Buffer size must be at least equal to kfifo size */
 	if (length < SPISLAVE_MSG_FIFO_SIZE) {
@@ -484,6 +499,7 @@ static ssize_t chrdev_device_read(struct file *filp,
 			/* If we are in restart state, we return 0 */
 			if (chrdev_drvdata->stream_restarted)
 				chrdev_drvdata->stream_restarted = false;
+			trace_printk("DSPI_SLAVE_STATE_RESTART\n");
 			return 0;
 		default:
 			trace_printk("%s: Wrong state %d\n", __func__, chrdev_drvdata->state);
@@ -499,12 +515,6 @@ static ssize_t chrdev_device_read(struct file *filp,
 		return -EAGAIN;
 	}
 
-#if 0
-	intermediate_time = ktime_get();
-	diff_start_to_intermediate_time = ktime_sub(intermediate_time, start_time);
-	min_start_to_intermediate_time = diff_start_to_intermediate_time < min_start_to_intermediate_time ? diff_start_to_intermediate_time : min_start_to_intermediate_time;
-	max_start_to_intermediate_time = diff_start_to_intermediate_time > max_start_to_intermediate_time ? diff_start_to_intermediate_time : max_start_to_intermediate_time;
-#endif
 	/* Data are ready, now we send them to the caller */
 	//status = kfifo_to_user(&rx_kfifo, buffer, length, &nb_bytes);
 	nb_bytes = SPISLAVE_MSG_FIFO_SIZE;
@@ -512,7 +522,10 @@ static ssize_t chrdev_device_read(struct file *filp,
 
 	chrdev_drvdata->state = DSPI_SLAVE_STATE_RX_DONE;
 
-	trace_printk("Copied %d bytes to user\n", status ? status : nb_bytes);
+	if (status) {
+		trace_printk("Error while copying data to user: %d\n", status);
+	}
+	//trace_printk("Copied %d bytes to user\n", status ? status : nb_bytes);
 	return status ? status : nb_bytes;
 }
 
@@ -550,25 +563,9 @@ static ssize_t chrdev_device_write(struct file *filp,
 
 	//measure_time(false, chrdev_drvdata->stat_spi_nbbytes_recv);
 
-	trace_printk("Write %d bytes to HW FIFO\n", nb_bytes);
+	//trace_printk("Write %d bytes to HW FIFO\n", nb_bytes);
 	chrdev_drvdata->state = DSPI_SLAVE_STATE_IDLE;
 	return status ? status : nb_bytes;
-}
-
-static void sync_spi_hw(void)
-{
-	read_fifo_timeout = ktime_set(5, 0);
-
-	/* Disable the DSPI IP */
-	chrdev_drvdata->cur_chip->mcr.halt = 1;
-	dspi_setup_chip(chrdev_drvdata);
-
-	/* Reset HW TX & HW RX fifo */
-	hwfifo_prepare(chrdev_drvdata);
-
-	/* Enable the DSPI IP */
-	chrdev_drvdata->cur_chip->mcr.halt = 0;
-	dspi_setup_chip(chrdev_drvdata);
 }
 
 static int chrdev_device_fsync (struct file *filp, loff_t start, loff_t end, int datasync)
@@ -737,7 +734,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	*((volatile u32 *)drv_data->dspi_sr) |=
 		(MCF_DSPI_DSR_RFOF | MCF_DSPI_DSR_TFUF);
 
-	trace_printk("Enter dspi_interrupt\n");
+	//trace_printk("Enter dspi_interrupt\n");
 
 	read_fifo_timeout = ktime_set(0, 5 * NSEC_PER_MSEC);
 
@@ -777,8 +774,6 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 
 	/* SPI input word arrived in RX FIFO */
 	if (!restart_dspi && (irq_status & MCF_DSPI_DSR_RFDF)) {
-
-		start_time = ktime_get();
 		/* When we enter here, we have data in hardware RX FIFO */
 		u16 in_data;
 		int i = 0;
@@ -804,6 +799,9 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 			i++;
 		}
 		drv_data->state = DSPI_SLAVE_STATE_RX;
+		drv_data->frame_perf.irq_received = ktime_get();
+		drv_data->frame_perf.frame_number++;
+		//trace_printk("get %04x\n", drv_data->mmap_buffer[0]);
 	}
 
 	/*
@@ -965,6 +963,9 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 		goto out_error_after_drv_data_alloc;
 	}
 
+	/* Enhance the interrupt priority */
+	__raw_writeb(6, MCFINTC1_ICR0 + MCFINT1_DSPI1);
+
 	*drv_data->int_icr = platform_info->irq_lp;
 	*drv_data->int_mr &= ~platform_info->irq_mask;
 	drv_data->stream_restarted = false;
@@ -1103,6 +1104,11 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	 * this will stop the runtime at this point. */
 	BUG_ON(chrdev_drvdata != NULL);
 	chrdev_drvdata = drv_data;
+
+	chrdev_drvdata->average_frame_time = 0;
+	chrdev_drvdata->min_frame_time = KTIME_MAX;
+	chrdev_drvdata->max_frame_time = 0;
+	chrdev_drvdata->frame_perf.frame_number = 0;
 
 	printk(KERN_INFO "DSPI: Coldfire slave initialized (DSPI%d)\n", platform_info->bus_num);
 
