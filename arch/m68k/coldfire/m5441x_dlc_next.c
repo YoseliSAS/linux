@@ -86,6 +86,32 @@ static struct platform_device mcf_uart6 = {
 	},
 };
 
+static struct resource mcf_dmatmr2_resource[] = {
+	[0] = {
+		.start = MCFDMATIMER_BASE2,
+		.end   = MCFDMATIMER_BASE2 + 0xf,
+		.flags = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start = MCFDMATIMER_IRQ_DTIM2,
+		.end   = MCFDMATIMER_IRQ_DTIM2,
+		.flags = IORESOURCE_IRQ,
+	},
+	[2] = {
+		.start = MCFDMATIMER_IRQ_PRIO2,
+		.end   = MCFDMATIMER_IRQ_PRIO2,
+		.flags = IORESOURCE_REG,
+		.name = "prio_reg",
+	}
+};
+
+static struct platform_device mcf_dmatmr2 = {
+	.name			= "mcftmr",
+	.id			= 2,
+	.num_resources = ARRAY_SIZE(mcf_dmatmr2_resource),
+	.resource = mcf_dmatmr2_resource,
+};
+
 static struct mtd_partition dlc_next_nor_partitions[] = {
 	{
 		.name = "w25q01",
@@ -276,6 +302,7 @@ static struct platform_device dspi_spi1_device = {
 static struct platform_device *dlc_next_devices[] __initdata = {
 	&mcf_uart2,
 	&mcf_uart6,
+	&mcf_dmatmr2,
 	&nfc_device,
 	&dspi_spi0_device,
 	&dspi_spi1_device,
