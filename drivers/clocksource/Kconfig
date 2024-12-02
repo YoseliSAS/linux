@@ -763,4 +763,11 @@ config RALINK_TIMER
 	  Enables support for system tick counter present on
 	  Ralink SoCs RT3352 and MT7620.
 
+config COLDFIRE_DMA_TIMERS
+	bool "Coldfire DMA timer clocksource"
+	depends on M5441x
+	select GENERIC_SCHED_CLOCK
+	help
+	  Enables support for the Coldfire DMA timers as a clocksource.
+
 endmenu
