@@ -20,10 +20,13 @@
 #include "utils.h"
 #include "timerlat_u.h"
 
+/* From 2.30, glibc provides gettid() */
+#if !defined(__GLIBC__) || !defined(__GLIBC_MINOR__) || (__GLIBC__ < 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ < 30))
 static inline pid_t gettid(void)
 {
 	return syscall(SYS_gettid);
 }
+#endif
 
 /*
  * This is the user-space main for the tool timerlatu/ threads.
