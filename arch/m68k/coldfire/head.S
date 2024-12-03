@@ -207,9 +207,14 @@ _start:
 	movec	%d0,%CACR
 	nop
 
+#if defined(CONFIG_M5441x)
+	movel	0x8ff00000,%d0
+	movec	%d0,%rambar
+#else
 	movel   #0,%d0
 	movec   %d0,%rambar
 	nop
+#endif
 
 #ifdef CONFIG_MMU
 	/*
