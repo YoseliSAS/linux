@@ -342,8 +342,15 @@ static struct dma_page *pool_alloc_page(struct dma_pool *pool, gfp_t mem_flags)
 	page->vaddr = dma_alloc_coherent(pool->dev, pool->allocation,
 					 &page->dma, mem_flags);
 	if (!page->vaddr) {
-		kfree(page);
-		return NULL;
+		page->vaddr = dma_alloc_noncoherent(pool->dev, pool->allocation,
+						    &page->dma, DMA_FROM_DEVICE,
+						    mem_flags);
+
+		if (!page->vaddr) {
+			trace_printk("dma alloc coherent failed\n");
+			kfree(page);
+			return NULL;
+		}
 	}
 
 	return page;
