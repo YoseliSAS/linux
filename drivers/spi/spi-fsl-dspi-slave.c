@@ -189,21 +189,7 @@ static inline int kfifo_tx_kfifo_to_hw(struct driver_data *drv_data)
 		total_sent += 2;
 		drv_data->stat_spi_nbbytes_sent += 2;
 	}
-#if 0
-	/* Busy wait for maximum 1.5ms */
-	ktime_t start = ktime_get();
-	int i = 0;
-	while ((__raw_readl(chrdev_drvdata->dspi_sr) & MCF_DSPI_DSR_TCF)  != 0) {
-		udelay(100);
-		i++;
-		if (i > 15) {
-			trace_printk(KERN_ERR "DSPI: Timeout on TX FIFO flush\n");
-			break;
-		}
-	}
 
-	trace_printk("TX FIFO flushed in %lld us\n", ktime_to_us(ktime_sub(ktime_get(), start)));
-#endif
 	return total_sent;
 }
 
@@ -217,13 +203,9 @@ static inline void dspi_setup_chip(struct driver_data *drv_data)
 {
 	struct chip_data *chip = drv_data->cur_chip;
 
-	// (*(volatile u32 *)drv_data->mcr) = chip->mcr_val;
-	// (*(volatile u32 *)(drv_data->ctar+drv_data->cs)) = chip->ctar_val;
 	__raw_writel(chip->mcr_val, drv_data->mcr);
 	__raw_writel(chip->ctar_val, drv_data->ctar + drv_data->cs);
 
-	// *drv_data->dspi_rser =
-	// 	(MCF_DSPI_DRSER_RFDFE | MCF_DSPI_DRSER_RFOFE | MCF_DSPI_DRSER_TFUFE);
 	__raw_writel(MCF_DSPI_DRSER_RFDFE | MCF_DSPI_DRSER_RFOFE | MCF_DSPI_DRSER_TFUFE, drv_data->dspi_rser);
 }
 
@@ -378,7 +360,6 @@ static void s2tos0_eport_exit(struct platform_device *pdev)
 	struct driver_data *drv_data = platform_get_drvdata(pdev);
 
 	/* Unregister IRQ4 handler */
-	//remove_irq(M5441X_EPORT4_IRQ_VECTOR, &s2tos0_eport_irqaction);
 	free_irq(M5441X_EPORT4_IRQ_VECTOR, NULL);
 
 	device_destroy(drv_data->chrdev_class, MKDEV(s2tos0_eport_major, 0));
@@ -427,6 +408,8 @@ static void sync_spi_hw(void)
 	/* Enable the DSPI IP */
 	chrdev_drvdata->cur_chip->mcr.halt = 0;
 	dspi_setup_chip(chrdev_drvdata);
+
+	chrdev_drvdata->state = DSPI_SLAVE_STATE_IDLE;
 }
 
 static int chrdev_device_open(struct inode *inode, struct file *filp)
@@ -534,6 +517,7 @@ static ssize_t chrdev_device_write(struct file *filp,
 {
 	int status;
 	unsigned int nb_bytes;
+	u8 txctr, timeout;
 
 	/* Check length is SPISLAVE_MSG_FIFO_SIZE */
 	if (unlikely(length != SPISLAVE_MSG_FIFO_SIZE)) {
@@ -543,11 +527,11 @@ static ssize_t chrdev_device_write(struct file *filp,
 	/* Check TX FIFO is empty.
 	 * If userspace app trig this issue, this mean read() and
 	 * write() call sequence is not respected */
-	if (MCF_DSPI_DSR_GET_TXCTR(*(volatile u32 *)chrdev_drvdata->dspi_sr)) {
-
-		trace_printk("HW TX fifo not empty !\n");
-		/* printk (KERN_DEBUG "DSPI: HW TX Fifo is not empty\n"); */
-		return -EIO;
+	timeout = 10;
+	while ((txctr = MCF_DSPI_DSR_GET_TXCTR(*(volatile u32 *)chrdev_drvdata->dspi_sr) != 0) && (timeout > 0)) {
+		trace_printk("HW TX fifo not empty (txctr = %u) !\n", txctr);
+		udelay(100);
+		timeout--;
 	}
 
 	chrdev_drvdata->state = DSPI_SLAVE_STATE_TX;
@@ -730,10 +714,6 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	struct device * dev = &drv_data->pdev->dev;
 	volatile u32 irq_status = __raw_readl(drv_data->dspi_sr);
 
-	/* Clear almost all flags immediately */
-	*((volatile u32 *)drv_data->dspi_sr) |=
-		(MCF_DSPI_DSR_RFOF | MCF_DSPI_DSR_TFUF);
-
 	//trace_printk("Enter dspi_interrupt\n");
 
 	read_fifo_timeout = ktime_set(0, 5 * NSEC_PER_MSEC);
@@ -825,6 +805,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	/* Let's awake any sleeping process waiting on read() syscall */
 	complete(&drv_data->read_complete);
 
+	__raw_writel(MCF_DSPI_DSR_RFOF | MCF_DSPI_DSR_TFUF, drv_data->dspi_sr);
 	return IRQ_HANDLED;
 }
 
