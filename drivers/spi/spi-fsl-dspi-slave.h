@@ -64,6 +64,7 @@ typedef enum {
 struct dspi_slave_perf {
 	ktime_t irq_received;
 	ktime_t frame_sent;
+	ktime_t wait_next_frame;
 	u64 frame_number;
 };
 
@@ -199,4 +200,3 @@ struct driver_data {
 #define MCFEPORT_EPFR_EPF7     (0x80)
 
 #endif /* __FSL_DSPI_SLAVE_H__ */
-

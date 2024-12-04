@@ -376,8 +376,7 @@ static void s2tos0_eport_exit(struct platform_device *pdev)
  {
 	static int count = 0;
 
-	chrdev_drvdata->frame_perf.frame_sent = ktime_get();
-	ktime_t diff = ktime_sub(chrdev_drvdata->frame_perf.frame_sent, chrdev_drvdata->frame_perf.irq_received);
+	ktime_t diff = ktime_sub(chrdev_drvdata->frame_perf.wait_next_frame, chrdev_drvdata->frame_perf.irq_received);
 	chrdev_drvdata->average_frame_time += diff;
 	chrdev_drvdata->min_frame_time = diff < chrdev_drvdata->min_frame_time ? diff : chrdev_drvdata->min_frame_time;
 	chrdev_drvdata->max_frame_time = diff > chrdev_drvdata->max_frame_time ? diff : chrdev_drvdata->max_frame_time;
@@ -457,6 +456,7 @@ static ssize_t chrdev_device_read(struct file *filp,
 	reinit_completion(&chrdev_drvdata->read_complete);
 	//trace_printk("Wait for next frame\n");
 	if (chrdev_drvdata->frame_perf.frame_number != 0) {
+		chrdev_drvdata->frame_perf.wait_next_frame = ktime_get();
 		measure_time();
 	}
 
@@ -473,7 +473,7 @@ static ssize_t chrdev_device_read(struct file *filp,
 	}
 
 	/* If RX Fifo is not full, we block the caller */
-	status = wait_for_completion_timeout(&chrdev_drvdata->read_complete, msecs_to_jiffies(ktime_to_ms(read_fifo_timeout)));
+	status = wait_for_completion_interruptible_timeout(&chrdev_drvdata->read_complete, msecs_to_jiffies(ktime_to_ms(read_fifo_timeout)));
 	switch(chrdev_drvdata->state) {
 		case DSPI_SLAVE_STATE_IDLE:
 		case DSPI_SLAVE_STATE_RX:
@@ -496,6 +496,11 @@ static ssize_t chrdev_device_read(struct file *filp,
 		trace_printk("Timeout on read() syscall\n");
 #endif
 		return -EAGAIN;
+	}
+
+	if (status < 0) {
+		trace_printk("Signal received\n");
+		return 0;
 	}
 
 	/* Data are ready, now we send them to the caller */
@@ -536,6 +541,7 @@ static ssize_t chrdev_device_write(struct file *filp,
 
 	chrdev_drvdata->state = DSPI_SLAVE_STATE_TX;
 
+	preempt_disable();
 	/* Push whole buffer in TX fifo */
 	status = __copy_from_user_inatomic(chrdev_drvdata->mmap_buffer, buffer, length);
 	//status = kfifo_from_user(&tx_kfifo, buffer, length, &nb_bytes);
@@ -545,7 +551,9 @@ static ssize_t chrdev_device_write(struct file *filp,
 	if (status == 0)
 		nb_bytes = kfifo_tx_kfifo_to_hw(chrdev_drvdata);
 
-	//measure_time(false, chrdev_drvdata->stat_spi_nbbytes_recv);
+	chrdev_drvdata->frame_perf.frame_sent = ktime_get();
+
+	preempt_enable();
 
 	//trace_printk("Write %d bytes to HW FIFO\n", nb_bytes);
 	chrdev_drvdata->state = DSPI_SLAVE_STATE_IDLE;
@@ -716,7 +724,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 
 	//trace_printk("Enter dspi_interrupt\n");
 
-	read_fifo_timeout = ktime_set(0, 5 * NSEC_PER_MSEC);
+	read_fifo_timeout = ktime_set(0, 10 * NSEC_PER_MSEC);
 
 	if (irq_status & MCF_DSPI_DSR_RFOF) {
 		/* RX HW FIFO overflow occurs */
@@ -740,7 +748,9 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 			"DSPI: dspi-slave: TX FIFO underflow occurs (occur. #%llu) !\n",
 			drv_data->stat_tx_hwfifo_underflow);
 #else
-		trace_printk("TX FIFO underflow\n");
+		trace_printk("TX FIFO underflow, last interrupt received at %lld, last frame sent at %lld\n",
+			ktime_to_ns(drv_data->frame_perf.irq_received),
+			ktime_to_ns(drv_data->frame_perf.frame_sent));
 #endif
 		restart_dspi = true;
 	}
