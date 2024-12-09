@@ -169,7 +169,7 @@ static void mcf_break_ctl(struct uart_port *port, int break_state)
 /****************************************************************************/
 
 #define TOTAL_SIZE 256
-#define RX_DMA_TIMER_INTERVAL	11
+#define RX_DMA_TIMER_INTERVAL	80
 
 void mcf_uart_dma_rx_callback(void *data);
 
@@ -182,18 +182,23 @@ static int mcf_copy_dma_to_tty(struct mcf_uart *sport)
 	int residue = __raw_readw(0xfc0450d4);
 	int ret = 0;
 
+	/* Static counter to track identical r_bytes */
+	static int stable_count = 0;
+	const int stable_threshold = 3; // Number of stable cycles before sending
+
 	/* Calculate the number of bytes ready and adjust head/tail */
 	rx_ring->head = sport->rx_period_length - residue;
 	r_bytes = CIRC_CNT(rx_ring->head, rx_ring->tail, sport->rx_period_length);
 
-	if ((r_bytes != 0) && (sport->rx_dma_running == false)) {
-		//trace_printk("DMA RX started\n");
-		sport->rx_dma_running = true;
-		goto done;
+	if (r_bytes == sport->last_r_bytes && r_bytes != 0) {
+		// Increment the stable counter if the same amount of data is detected
+		stable_count++;
+	} else {
+		// Reset the stable counter if the data amount changes
+		stable_count = 0;
 	}
 
-	if ((sport->last_r_bytes - r_bytes == 0) && (sport->rx_dma_running == true))
-	{
+	if (stable_count >= stable_threshold) {
 		/* Copy all the received data from the ring buffer to the tty buffer */
 		dma_sync_single_for_cpu(sport->port.dev, sport->dma_buf, sport->rx_buf_size, DMA_FROM_DEVICE);
 		w_bytes = tty_insert_flip_string(tport, rx_ring->buf + rx_ring->tail, r_bytes);
@@ -205,9 +210,10 @@ static int mcf_copy_dma_to_tty(struct mcf_uart *sport)
 
 		tty_flip_buffer_push(tport);
 		ret = w_bytes;
+		// Reset stable count after processing
+		stable_count = 0;
 	}
 
-done:
 	sport->last_r_bytes = r_bytes;
 	return ret;
 }
