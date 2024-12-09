@@ -120,21 +120,6 @@ static inline void sync_s0tos2_set(u8 val)
 #endif
 }
 
-static inline u8 sync_s2tos0_get(void)
-{
-#if 0
-	/* GPIOC4 input mode */
-	__raw_writeb(__raw_readb(MCFGPIO_PDDR_C) & ~(1 << 4), MCFGPIO_PDDR_C);
-
-	return __raw_readb(MCFGPIO_PPDSDR_C) & (1 << 4);
-#else
-	/* C4 => 3*8 + 4 */
-	gpio_request(28, "sync_s2tos0");
-	gpio_direction_input(28);
-	return gpio_get_value(28);
-#endif
-}
-
 static inline void stat_reset_counters(struct driver_data *drv_data)
 {
 	drv_data->stat_spi_nbbytes_recv    = 0;
@@ -211,160 +196,6 @@ static inline void dspi_setup_chip(struct driver_data *drv_data)
 
 /****************************************************************************/
 
-/*
- * /dev EPORT4 related callbacks (sync_s2tos0 event handler)
- */
-
-#define M5441X_EPORT4_IRQ_SOURCE	(4)
-#define M5441X_EPORT4_IRQ_VECTOR	(64 + M5441X_EPORT4_IRQ_SOURCE)
-
-#define S2TOS0_EPORT_DEVICE_NAME	"s2tos"
-
-
-/* Device variables */
-static struct device *s2tos0_eport_device;
-static int s2tos0_eport_major;
-static int s2tos0_eport_firstread;
-
-static DECLARE_WAIT_QUEUE_HEAD(s2tos0_eport_waitq);
-
-static volatile int s2tos0_eport_hasdata;
-
-static irqreturn_t s2tos0_eport_handler(int irq, void *dev_id)
-{
-	s2tos0_eport_hasdata = 1;
-
-	wake_up(&s2tos0_eport_waitq);
-
-	return IRQ_HANDLED;
-}
-
-/* File operations */
-static int s2tos0_eport_open(struct inode *inode, struct file *filp)
-{
-	s2tos0_eport_firstread = true;
-
-	return 0;
-}
-
-static int s2tos0_eport_close(struct inode *inode, struct file *filp)
-{
-	return 0;
-}
-
-static ssize_t s2tos0_eport_read(
-	struct file *filp,
-	char __user *buffer,
-	size_t length,
-	loff_t *offset)
-{
-	char msg[2];
-	int count;
-	unsigned long flags;
-
-	if (length < 1)
-		return -EINVAL;
-
-	if (unlikely(s2tos0_eport_firstread))
-		s2tos0_eport_firstread = false;
-	else {
-		s2tos0_eport_hasdata = 0;
-		wait_event_interruptible(s2tos0_eport_waitq, s2tos0_eport_hasdata);
-	}
-
-	local_irq_save(flags);
-
-	/* Pinmux: PAR_IRQ04 -> GPIO (PC4) */
-	// byte = MCFGPIO_PAR_IRQ0H;
-	// byte = byte & (~0x0c);
-	// MCFGPIO_PAR_IRQ0H = byte;
-	__raw_writeb(__raw_readb(MCFGPIO_PAR_IRQ0H) & (~0x0c), MCFGPIO_PAR_IRQ0H);
-
-	/* Read PC4/IRQ04 */
-	msg[0] = (__raw_readb(MCFGPIO_PPDSDR_C) & 0x10) ? '1' : '0';
-
-	/* Pinmux: PAR_IRQ04 -> Primary (IRQ) */
-	// byte = MCFGPIO_PAR_IRQ0H;
-	// byte = byte | 0x0c;
-	// MCFGPIO_PAR_IRQ0H = byte;
-	__raw_writeb(__raw_readb(MCFGPIO_PAR_IRQ0H) | 0x0c, MCFGPIO_PAR_IRQ0H);
-
-	local_irq_restore(flags);
-
-	if (length >= 2) {
-		msg[1] = '\n';
-		count = 2;
-	} else
-		count = 1;
-
-	if (copy_to_user(buffer, msg, count) != 0) {
-		dev_err(s2tos0_eport_device, "Failed to copy data to user space\n");
-		return -EFAULT;
-	}
-
-	return count;
-}
-
-static const struct file_operations s2tos0_eport_fops = {
-	.read = s2tos0_eport_read,
-	.open = s2tos0_eport_open,
-	.release = s2tos0_eport_close
-};
-
-static int s2tos0_eport_init(struct platform_device *pdev, struct class * klass)
-{
-	int retval;
-
-	/* Register /dev/s2tos0 char device */
-	s2tos0_eport_major = register_chrdev(0, S2TOS0_EPORT_DEVICE_NAME, &s2tos0_eport_fops);
-
-	if (s2tos0_eport_major < 0) {
-		retval = s2tos0_eport_major;
-		printk(KERN_ERR "DSPI: Failed to register eport device (error: %d)\n", retval);
-		goto register_chrdev_failed;
-	}
-
-	s2tos0_eport_device = device_create(klass,
-					  NULL,
-					  MKDEV(s2tos0_eport_major, 0),
-					  NULL, "%s%d",
-					  S2TOS0_EPORT_DEVICE_NAME,
-					  0);
-
-	if (IS_ERR(s2tos0_eport_device)) {
-		printk(KERN_ERR "DSPI: Failed to create device '%s0'\n", S2TOS0_EPORT_DEVICE_NAME);
-		retval = PTR_ERR(s2tos0_eport_device);
-		goto device_create_failed;
-	}
-
-	retval = request_irq(M5441X_EPORT4_IRQ_VECTOR, s2tos0_eport_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING, "s2tos0-eportd", NULL);
-	if (retval < 0) {
-		printk(KERN_ERR "Unable to attach EPORT interrupt: %d\n", retval);
-		goto register_irq_failed;
-	}
-
-	return 0;
-
-device_create_failed:
-	unregister_chrdev(s2tos0_eport_major, S2TOS0_EPORT_DEVICE_NAME);
-
-register_chrdev_failed:
-	free_irq(M5441X_EPORT4_IRQ_VECTOR, NULL);
-
-register_irq_failed:
-	return retval;
-}
-
-static void s2tos0_eport_exit(struct platform_device *pdev)
-{
-	struct driver_data *drv_data = platform_get_drvdata(pdev);
-
-	/* Unregister IRQ4 handler */
-	free_irq(M5441X_EPORT4_IRQ_VECTOR, NULL);
-
-	device_destroy(drv_data->chrdev_class, MKDEV(s2tos0_eport_major, 0));
-	unregister_chrdev(s2tos0_eport_major, S2TOS0_EPORT_DEVICE_NAME);
-}
 
 /****************************************************************************/
 
@@ -633,29 +464,6 @@ static int procfs_write_reset_stat(struct file *file,
 	return count;
 }
 
-static int procfs_read_sync_s2tos0(
-	char *page_buffer,
-	char **my_first_byte,
-	off_t virtual_start,
-	int length,
-	int *eof,
-	void *data)
-{
-	int my_buffer_offset = 0;
-	char * const my_base = page_buffer;
-
-	if (virtual_start == 0) {
-		my_buffer_offset += sprintf(my_base + my_buffer_offset,
-		   "%c\n", sync_s2tos0_get() ? '1' : '0');
-
-		*my_first_byte = page_buffer;
-		return  my_buffer_offset;
-	} else {
-		*eof = 1;
-		return 0;
-	}
-}
-
 static int procfs_write_sync_s0tos2(struct file *file,
 					const char *buffer,
 					unsigned long count,
@@ -719,7 +527,6 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 {
 	u8 restart_dspi = false;
 	struct driver_data *drv_data = (struct driver_data *)dev_id;
-	struct device * dev = &drv_data->pdev->dev;
 	volatile u32 irq_status = __raw_readl(drv_data->dspi_sr);
 
 	//trace_printk("Enter dspi_interrupt\n");
@@ -939,11 +746,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	init_completion(&drv_data->read_complete);
 	drv_data->state = DSPI_SLAVE_STATE_IDLE;
 
-	/*
-	 * Sync signal configuration
-	 */
-	sync_s2tos0_get(); /* Muxing in input for this signal */
-
 	/* We inform S12X not to send a bitstream */
 	sync_s0tos2_set(false);
 
@@ -1022,23 +824,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 		procfs_entry->data = (void *) drv_data;
 		procfs_entry->write_proc = procfs_write_reset_stat;
 	}
-
-	/* Entries for sync_s0tos2 and sync_s2tos0 signals */
-	procfs_entry = create_proc_read_entry("sync_s2tos0",
-				S_IRUGO, drv_data->procfs_direntry,
-				procfs_read_sync_s2tos0, (void *) drv_data);
-
-	procfs_entry = create_proc_entry("sync_s0tos2",
-				S_IWUGO, drv_data->procfs_direntry);
-
-	if (procfs_entry == NULL) {
-		status = -ENOMEM;
-		dev_warn(&pdev->dev, "Unable to create /proc entry\n");
-		goto out_error_after_drv_data_alloc;
-	} else {
-		procfs_entry->data = (void *) drv_data;
-		procfs_entry->write_proc = procfs_write_sync_s0tos2;
-	}
 #endif
 
 	/* Create a debugfs to drive sync_s0tos2_set() from /sys/kernel/debug/dspi-slave/sync_s0tos2 */
@@ -1085,10 +870,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 		status = PTR_ERR(drv_data->chrdev);
 		goto out_error_devreg;
 	}
-
-	/* sync_s2tos0 IRQ based handler init */
-	if ((status = s2tos0_eport_init(pdev, drv_data->chrdev_class)))
-		goto out_error_devreg;
 
 	/* Right now, we only support one /dev entry, and one pointer to drv_data.
 	 * if developper register more than one "dspi-slave" instance in platform,
@@ -1138,8 +919,6 @@ static void coldfire_spi_remove(struct platform_device *pdev)
 	 * stop it */
 	sync_s0tos2_set(false);
 
-	s2tos0_eport_exit(pdev);
-
 	device_destroy(drv_data->chrdev_class, MKDEV(drv_data->chrdev_major, 0));
 	class_unregister(drv_data->chrdev_class);
 	class_destroy(drv_data->chrdev_class);
@@ -1151,8 +930,6 @@ static void coldfire_spi_remove(struct platform_device *pdev)
 
 #if 0
 	/* Remove ProcFS entries */
-	remove_proc_entry("sync_s2tos0", drv_data->procfs_direntry);
-	remove_proc_entry("sync_s0tos2", drv_data->procfs_direntry);
 	remove_proc_entry("reset_stats", drv_data->procfs_direntry);
 	remove_proc_entry("stat_tx_hwfifo_underflow", drv_data->procfs_direntry);
 	remove_proc_entry("stat_rx_kfifo_overflow", drv_data->procfs_direntry);
