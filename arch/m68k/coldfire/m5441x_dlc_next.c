@@ -299,6 +299,27 @@ static struct platform_device dspi_spi1_device = {
 	}
 };
 
+static struct resource mcf_s2tos0_resource[] = {
+	[0] = {
+		.start = MCFINT0_VECBASE + 4,
+		.end   = MCFINT0_VECBASE + 4,
+		.flags = IORESOURCE_IRQ,
+	},
+	[2] = {
+		.start = 28,
+		.end   = 28,
+		.flags = IORESOURCE_REG,
+		.name = "s2tos0_reg",
+	}
+};
+
+static struct platform_device mcf_s2tos0 = {
+	.name			= "s2tos0_eport",
+	.id			= 0,
+	.num_resources = ARRAY_SIZE(mcf_s2tos0_resource),
+	.resource = mcf_s2tos0_resource,
+};
+
 static struct platform_device *dlc_next_devices[] __initdata = {
 	&mcf_uart2,
 	&mcf_uart6,
@@ -306,6 +327,7 @@ static struct platform_device *dlc_next_devices[] __initdata = {
 	&nfc_device,
 	&dspi_spi0_device,
 	&dspi_spi1_device,
+	&mcf_s2tos0,
 };
 
 #define MCFGPIO_PAR_DSPIO_SCK_MASK		(0xF3)

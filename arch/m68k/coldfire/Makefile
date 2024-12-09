@@ -49,3 +49,5 @@ obj-$(CONFIG_MODELO_SWITCH) += l2switch.o
 
 obj-y			+= gpio.o
 obj-y			+= head.o
+
+obj-y			+= s2tos0_eport.o
