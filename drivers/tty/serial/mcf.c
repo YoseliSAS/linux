@@ -70,13 +70,37 @@ struct mcf_uart {
 	unsigned int		rx_periods;
 	dma_cookie_t		rx_cookie;
 	dma_addr_t		dma_buf;	/* SW-FIFO (DMA destination) */
-	struct dma_async_tx_descriptor *desc;
 	struct hrtimer		rx_timer;
 	bool			rx_dma_running;
 	unsigned int		last_r_bytes;
+	struct dma_async_tx_descriptor *desc;
+	bool 			reload_dma;
+
+	void *tx_buf;
+	dma_addr_t tx_dma_buf;
+	struct dma_async_tx_descriptor *tx_desc;
+	size_t tx_buf_size;
+	bool tx_dma_active;
+	dma_cookie_t tx_cookie;
+	unsigned int tx_len;
+
+	ktime_t rx_interval;
+
+	int rx_priority;
+	int tx_priority;
 };
 
 #define MCFUART_DMA_RXFIFOSIZE	128
+
+#define TOTAL_SIZE 4096
+
+/* One frame is maximum 71 bytes, 100µs per byte, so ~7ms. => force to 10ms */
+#define RX_DMA_TIMER_INTERVAL	11
+
+void mcf_uart_dma_rx_callback(void *data);
+void mcf_uart_dma_tx_callback(void *data);
+int mcf_next_xfer_rx_dma(struct mcf_uart *sport);
+
 
 /****************************************************************************/
 
@@ -118,7 +142,334 @@ static void mcf_set_mctrl(struct uart_port *port, unsigned int sigs)
 
 /****************************************************************************/
 
-static void mcf_start_tx(struct uart_port *port)
+static int mcf_dma_tx_setup(struct uart_port *port)
+{
+    struct mcf_uart *sport = container_of(port, struct mcf_uart, port);
+    struct dma_slave_config slave_config = {};
+    int ret;
+
+    trace_printk("Setting up DMA for chan %d\n", sport->dma_chan_tx->chan_id);
+    if (!sport->dma_chan_tx) {
+	dev_err(port->dev, "cannot get the TX DMA channel\n");
+	return -EINVAL;
+    }
+
+    slave_config.direction = DMA_MEM_TO_DEV;
+    slave_config.dst_addr = (phys_addr_t)(port->membase + MCFUART_UTB);
+    slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_1_BYTE;
+    slave_config.dst_maxburst = 1;
+
+    ret = dmaengine_slave_config(sport->dma_chan_tx, &slave_config);
+    if (ret) {
+        dev_err(port->dev, "TX DMA config failed\n");
+        return ret;
+    }
+
+    sport->tx_buf_size = TOTAL_SIZE;
+    sport->tx_buf = dma_alloc_coherent(port->dev, sport->tx_buf_size, &sport->tx_dma_buf, GFP_KERNEL);
+    if (!sport->tx_buf) {
+	dev_err(port->dev, "TX DMA buffer allocation failed\n");
+	return -ENOMEM;
+    }
+
+    trace_printk("TX DMA setup done\n");
+
+    return 0;
+}
+
+static void mcf_start_tx_dma(struct uart_port *port)
+{
+	struct mcf_uart *sport = container_of(port, struct mcf_uart, port);
+	struct tty_port *tport = &port->state->port;
+	unsigned char *tail;
+
+	if (sport->tx_dma_active)
+		return;
+
+	if (hrtimer_active(&sport->rx_timer)) {
+		hrtimer_cancel(&sport->rx_timer);
+		//trace_printk("RX Timer stopped (TX in progress)\n");
+	}
+
+	/* Check if we have data to transmit */
+	if (kfifo_is_empty(&tport->xmit_fifo)) {
+		//trace_printk("No data to transmit\n");
+		return;
+	}
+
+	/* Get data from kfifo */
+	sport->tx_len = kfifo_out_linear_ptr(&tport->xmit_fifo, &tail, UART_XMIT_SIZE);
+	memcpy(sport->tx_buf, tail, sport->tx_len);
+
+	sport->tx_desc = dmaengine_prep_slave_single(sport->dma_chan_tx,
+						     sport->tx_dma_buf,
+						     sport->tx_len,
+						     DMA_MEM_TO_DEV,
+						     DMA_PREP_INTERRUPT);
+	if (!sport->tx_desc) {
+		dma_free_coherent(port->dev, sport->tx_buf_size, sport->tx_buf, sport->tx_dma_buf);
+		dev_err(port->dev, "TX DMA prep failed\n");
+		return;
+	}
+
+	sport->tx_desc->callback = mcf_uart_dma_tx_callback;
+	sport->tx_desc->callback_param = sport;
+
+	sport->tx_dma_active = true;
+	dmaengine_submit(sport->tx_desc);
+	dma_async_issue_pending(sport->dma_chan_tx);
+
+	//trace_printk("TX DMA started\n");
+}
+
+void mcf_uart_dma_tx_callback(void *data)
+{
+	struct mcf_uart *sport = data;
+	struct uart_port *port = &sport->port;
+	struct tty_port *tport = &port->state->port;
+	struct dma_chan *chan = sport->dma_chan_tx;
+	unsigned long flags;
+	struct dma_tx_state state;
+	enum dma_status status;
+
+	status = dmaengine_tx_status(chan, sport->tx_cookie, &state);
+	if (status == DMA_ERROR) {
+		dev_err(port->dev, "TX DMA error: %08x\n", __raw_readl(0xfc044004));
+	}
+
+	sport->tx_dma_active = false;
+
+	uart_port_lock_irqsave(port, &flags);
+
+	uart_xmit_advance(port, sport->tx_len);
+
+	if (!kfifo_is_empty(&tport->xmit_fifo)) {
+		//trace_printk("Restarting DMA for remaining data\n");
+		mcf_start_tx_dma(port);
+	} else {
+		//trace_printk("No more data to transmit\n");
+	}
+
+	if (!hrtimer_active(&sport->rx_timer)) {
+		hrtimer_start(&sport->rx_timer, sport->rx_interval, HRTIMER_MODE_REL);
+		//trace_printk("RX Timer restarted after TX\n");
+	}
+
+	if (kfifo_len(&tport->xmit_fifo) < WAKEUP_CHARS)
+		uart_write_wakeup(port);
+
+	uart_port_unlock_irqrestore(port, flags);
+}
+
+void mcf_uart_dma_rx_callback(void *data)
+{
+	struct mcf_uart *sport = data;
+	struct dma_tx_state state;
+	enum dma_status status;
+
+	status = dmaengine_tx_status(sport->dma_chan_rx, sport->rx_cookie, &state);
+	if (status == DMA_ERROR) {
+		dev_err(sport->port.dev, "RX DMA error: %08x\n", __raw_readl(0xfc044004));
+		mcf_next_xfer_rx_dma(sport);
+	}
+}
+
+/****************************************************************************/
+static int mcf_copy_dma_to_tty(struct mcf_uart *sport)
+{
+	struct uart_port *port = &sport->port;
+	struct tty_port *tport = &port->state->port;
+	struct circ_buf *rx_ring = &sport->rx_ring;
+	unsigned int w_bytes, r_bytes;
+	int residue = __raw_readw(0xfc0450d4);
+	int ret = 0;
+
+	rx_ring->head = sport->rx_period_length - residue;
+	r_bytes = CIRC_CNT(rx_ring->head, rx_ring->tail, sport->rx_buf_size);
+
+	//trace_printk("Residue: %d, r_bytes: %d, head: %d, tail: %d\n", residue, r_bytes, rx_ring->head, rx_ring->tail);
+
+	if (r_bytes > 0) {
+		uart_port_lock(port);
+		w_bytes = tty_insert_flip_string(tport,
+	                                     rx_ring->buf + rx_ring->tail,
+	                                     r_bytes);
+
+		rx_ring->tail = (rx_ring->tail + w_bytes) & (sport->rx_buf_size - 1);
+		sport->port.icount.rx += w_bytes;
+
+		tty_flip_buffer_push(tport);
+		ret = w_bytes;
+		uart_port_unlock(port);
+
+		//trace_printk("Copied %d bytes to tty\n", w_bytes);
+	}
+
+	if (residue < 16)
+		sport->reload_dma = true;
+
+	return ret;
+}
+
+int mcf_next_xfer_rx_dma(struct mcf_uart *sport)
+{
+	struct dma_chan	*chan = sport->dma_chan_rx;
+	struct device *dev = sport->port.dev;
+
+	sport->desc =  dmaengine_prep_slave_single(sport->dma_chan_rx,
+						   sport->dma_buf,
+						   sport->rx_period_length,
+						   DMA_DEV_TO_MEM,
+						   DMA_PREP_INTERRUPT);
+	if (!sport->desc) {
+		dev_err(dev, "DMA prep cyclic error\n");
+		dma_free_coherent(dev, sport->rx_buf_size, sport->rx_buf, sport->dma_buf);
+		return -EINVAL;
+	}
+
+	sport->desc->callback = mcf_uart_dma_rx_callback;
+	sport->desc->callback_param = sport;
+
+	sport->rx_ring.head = 0;
+	sport->rx_ring.tail = 0;
+	sport->rx_ring.buf = sport->rx_buf;
+	sport->rx_dma_running = false;
+	sport->last_r_bytes = 0;
+
+	sport->rx_cookie = dmaengine_submit(sport->desc);
+	if (dma_submit_error(sport->rx_cookie)) {
+		dev_err(dev, "DMA submit error\n");
+		devm_kfree(dev, sport->rx_buf);
+		return -EINVAL;
+	}
+	dma_async_issue_pending(chan);
+	//trace_printk("Prepared DMA\n");
+	sport->reload_dma = false;
+
+	return 0;
+}
+
+static enum hrtimer_restart mcf_rx_thread(struct hrtimer *timer)
+{
+	struct mcf_uart *sport = container_of(timer, struct mcf_uart, rx_timer);
+	int w_bytes;
+
+	if (sport->tx_dma_active) {
+		//trace_printk("RX skipped (TX in progress)\n");
+		return HRTIMER_RESTART;
+	}
+
+	sport->reload_dma = false;
+
+	w_bytes = mcf_copy_dma_to_tty(sport);
+
+	if (sport->reload_dma) {
+		dmaengine_terminate_all(sport->dma_chan_rx);
+		mcf_next_xfer_rx_dma(sport);
+	}
+
+	hrtimer_forward_now(timer, sport->rx_interval);
+	return HRTIMER_RESTART;
+}
+
+static int mcf_uart_dma_chan_setup(struct uart_port *port)
+{
+	struct mcf_uart *sport = container_of(port, struct mcf_uart, port);
+	struct dma_chan *chan;
+	int ret = 0;
+
+	/* Prepare for RX : */
+	chan = dma_request_chan(port->dev, "rx");
+	if (IS_ERR(chan)) {
+		sport->dma_chan_rx = NULL;
+		ret = PTR_ERR(chan);
+		dev_err(port->dev, "Cannot get RX DMA channel: %d\n", ret);
+		goto err;
+	}
+	sport->dma_chan_rx = chan;
+	sport->rx_priority = 7;
+	sport->dma_chan_rx->private = &sport->rx_priority;
+
+	chan = dma_request_chan(port->dev, "tx");
+	if (IS_ERR(chan)) {
+		ret = PTR_ERR(chan);
+		dev_err(port->dev, "Cannot get TX DMA channel: %d\n", ret);
+		goto err_tx;
+	}
+	sport->dma_chan_tx = chan;
+	sport->tx_priority = 8;
+	sport->dma_chan_tx->private = &sport->tx_priority;
+
+	trace_printk("DMA channels %d and %d acquired, asking for priority %d and %d\n",
+		sport->dma_chan_rx->chan_id, sport->dma_chan_tx->chan_id,
+		sport->rx_priority, sport->tx_priority);
+
+	return 0;
+
+err_tx:
+	dma_release_channel(sport->dma_chan_rx);
+err:
+	return ret;
+}
+
+static int mcf_dma_rx_setup(struct uart_port *port)
+{
+	struct mcf_uart *sport = container_of(port, struct mcf_uart, port);
+	struct dma_slave_config slave_config = {};
+	struct device *dev = sport->port.dev;
+	int ret;
+
+	trace_printk("Setting up DMA for chan %d\n", sport->dma_chan_rx->chan_id);
+	if (!sport->dma_chan_rx) {
+		dev_err(port->dev, "cannot get the DMA channel\n");
+		ret = -EINVAL;
+		goto err;
+	}
+
+	slave_config.direction = DMA_DEV_TO_MEM;
+	slave_config.src_addr = (phys_addr_t) (port->membase + MCFUART_URB);
+	slave_config.src_addr_width = DMA_SLAVE_BUSWIDTH_1_BYTE;
+	slave_config.src_maxburst = 1;
+	slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_1_BYTE;
+	slave_config.dst_maxburst = 1;
+
+	ret = dmaengine_slave_config(sport->dma_chan_rx, &slave_config);
+	if (ret) {
+		dev_err(port->dev, "error in RX dma configuration.\n");
+		goto err;
+	}
+
+	sport->rx_period_length = TOTAL_SIZE;
+	sport->rx_buf_size = TOTAL_SIZE;
+	sport->rx_buf = dma_alloc_coherent(port->dev, sport->rx_buf_size, &sport->dma_buf, GFP_KERNEL);
+	if (!sport->rx_buf) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	trace_printk("RX buffer allocated at %p, dma_buf: %pad\n", sport->rx_buf, &sport->dma_buf);
+
+err:
+	return ret;
+}
+
+static int mcf_dma_setup(struct uart_port *port)
+{
+	int ret;
+
+	ret = mcf_dma_rx_setup(port);
+	if (ret)
+		return ret;
+
+	ret = mcf_dma_tx_setup(port);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+/****************************************************************************/
+static void mcf_start_tx_old(struct uart_port *port)
 {
 	struct mcf_uart *pp = container_of(port, struct mcf_uart, port);
 
@@ -132,6 +483,14 @@ static void mcf_start_tx(struct uart_port *port)
 	writeb(pp->imr, port->membase + MCFUART_UIMR);
 }
 
+static void mcf_start_tx(struct uart_port *port)
+{
+	if (!uart_console(port)) {
+		mcf_start_tx_dma(port);
+	} else {
+		mcf_start_tx_old(port);
+	}
+}
 /****************************************************************************/
 
 static void mcf_stop_tx(struct uart_port *port)
@@ -166,189 +525,6 @@ static void mcf_break_ctl(struct uart_port *port, int break_state)
 	uart_port_unlock_irqrestore(port, flags);
 }
 
-/****************************************************************************/
-
-#define TOTAL_SIZE 256
-#define RX_DMA_TIMER_INTERVAL	80
-
-void mcf_uart_dma_rx_callback(void *data);
-
-static int mcf_copy_dma_to_tty(struct mcf_uart *sport)
-{
-	struct uart_port *port = &sport->port;
-	struct tty_port *tport = &port->state->port;
-	struct circ_buf *rx_ring = &sport->rx_ring;
-	unsigned int w_bytes, r_bytes;
-	int residue = __raw_readw(0xfc0450d4);
-	int ret = 0;
-
-	/* Static counter to track identical r_bytes */
-	static int stable_count = 0;
-	const int stable_threshold = 3; // Number of stable cycles before sending
-
-	/* Calculate the number of bytes ready and adjust head/tail */
-	rx_ring->head = sport->rx_period_length - residue;
-	r_bytes = CIRC_CNT(rx_ring->head, rx_ring->tail, sport->rx_period_length);
-
-	if (r_bytes == sport->last_r_bytes && r_bytes != 0) {
-		// Increment the stable counter if the same amount of data is detected
-		stable_count++;
-	} else {
-		// Reset the stable counter if the data amount changes
-		stable_count = 0;
-	}
-
-	if (stable_count >= stable_threshold) {
-		/* Copy all the received data from the ring buffer to the tty buffer */
-		dma_sync_single_for_cpu(sport->port.dev, sport->dma_buf, sport->rx_buf_size, DMA_FROM_DEVICE);
-		w_bytes = tty_insert_flip_string(tport, rx_ring->buf + rx_ring->tail, r_bytes);
-		dma_sync_single_for_device(sport->port.dev, sport->dma_buf, sport->rx_buf_size, DMA_FROM_DEVICE);
-
-		rx_ring->tail = (rx_ring->tail + w_bytes) & (sport->rx_period_length - 1);
-
-		sport->port.icount.rx += w_bytes;
-
-		tty_flip_buffer_push(tport);
-		ret = w_bytes;
-		// Reset stable count after processing
-		stable_count = 0;
-	}
-
-	sport->last_r_bytes = r_bytes;
-	return ret;
-}
-
-static int mcf_next_xfer_rx_dma(struct mcf_uart *sport)
-{
-	struct dma_chan	*chan = sport->dma_chan_rx;
-	struct device *dev = sport->port.dev;
-
-	sport->rx_ring.head = 0;
-	sport->rx_ring.tail = 0;
-	sport->rx_ring.buf = sport->rx_buf;
-	sport->rx_dma_running = false;
-	sport->last_r_bytes = 0;
-
-	sport->desc =  dmaengine_prep_slave_single(chan, sport->dma_buf, sport->rx_period_length,
-					    DMA_DEV_TO_MEM, DMA_PREP_INTERRUPT | DMA_CTRL_REUSE);
-	if (!sport->desc) {
-		dev_err(dev, "DMA prep cyclic error\n");
-		devm_kfree(dev, sport->rx_buf);
-		return -EINVAL;
-	}
-
-	sport->desc->callback = mcf_uart_dma_rx_callback;
-	sport->desc->callback_param = sport;
-
-	sport->rx_cookie = dmaengine_submit(sport->desc);
-	if (dma_submit_error(sport->rx_cookie)) {
-		dev_err(dev, "DMA submit error\n");
-		devm_kfree(dev, sport->rx_buf);
-		return -EINVAL;
-	}
-	dma_async_issue_pending(chan);
-	//trace_printk("Prepared DMA\n");
-
-	return 0;
-}
-
-static enum hrtimer_restart mcf_rx_thread(struct hrtimer *timer)
-{
-	struct mcf_uart *sport = container_of(timer, struct mcf_uart, rx_timer);
-	struct dma_chan *chan = sport->dma_chan_rx;
-//	struct sched_param sp = { .sched_priority = 93 };
-	int w_bytes;
-
-//	sched_setscheduler(current, SCHED_FIFO, &sp);
-
-	dmaengine_pause(chan);
-	w_bytes = mcf_copy_dma_to_tty(sport);
-
-	if (w_bytes == 0) {
-		dmaengine_resume(chan);
-	}
-	else {
-		//trace_printk("Copied %d bytes to tty\n", w_bytes);
-		dmaengine_terminate_async(chan);
-		mcf_next_xfer_rx_dma(sport);
-	}
-
-	hrtimer_forward_now(&sport->rx_timer, ms_to_ktime(RX_DMA_TIMER_INTERVAL));
-	return HRTIMER_RESTART;
-}
-
-void mcf_uart_dma_rx_callback(void *data)
-{
-	struct mcf_uart *sport = data;
-	struct dma_chan *chan = sport->dma_chan_rx;
-	struct dma_tx_state state;
-	enum dma_status status;
-
-	//trace_printk("IRQ callback\n");
-	status = dmaengine_tx_status(chan, sport->rx_cookie, &state);
-
-	if (status == DMA_ERROR) {
-		trace_printk("error: %08x\n", __raw_readl(0xfc044004));
-		uart_port_lock(&sport->port);
-		// imx_uart_clear_rx_errors(sport);
-		uart_port_unlock(&sport->port);
-		goto done;
-	}
-
-	mcf_copy_dma_to_tty(sport);
-
-done:
-	/* Re-enable the DMA channel */
-	if (status == DMA_COMPLETE)
-		mcf_next_xfer_rx_dma(sport);
-
-	return;
-}
-
-static int mcf_dma_setup(struct uart_port *port)
-{
-	struct mcf_uart *sport = container_of(port, struct mcf_uart, port);
-	struct dma_chan *chan;
-	struct dma_slave_config slave_config = {};
-	int ret;
-
-	/* Prepare for RX : */
-	chan = dma_request_chan(port->dev, "rx");
-	if (IS_ERR(chan)) {
-		sport->dma_chan_rx = NULL;
-		ret = PTR_ERR(chan);
-		dev_err(port->dev, "cannot get the DMA channel: %d\n", ret);
-		goto err;
-	}
-	sport->dma_chan_rx = chan;
-	printk("%s: Chan %d requested\n", __func__, chan->chan_id);
-
-	slave_config.direction = DMA_DEV_TO_MEM;
-	slave_config.src_addr = (phys_addr_t) (port->membase + MCFUART_URB);
-	slave_config.src_addr_width = DMA_SLAVE_BUSWIDTH_1_BYTE;
-	slave_config.src_maxburst = 1;
-	slave_config.dst_addr_width = DMA_SLAVE_BUSWIDTH_1_BYTE;
-	slave_config.dst_maxburst = 1;
-
-	ret = dmaengine_slave_config(sport->dma_chan_rx, &slave_config);
-	if (ret) {
-		dev_err(port->dev, "error in RX dma configuration.\n");
-		goto err;
-	}
-
-	sport->rx_period_length = TOTAL_SIZE / 2;
-	sport->rx_buf_size = TOTAL_SIZE;
-	sport->rx_buf = devm_kzalloc(port->dev, sport->rx_buf_size, GFP_DMA);
-	if (!sport->rx_buf) {
-		ret = -ENOMEM;
-		goto err;
-	}
-	sport->dma_buf = virt_to_phys(sport->rx_buf);
-
-err:
-	return ret;
-}
-
 static int mcf_startup(struct uart_port *port)
 {
 	struct mcf_uart *pp = container_of(port, struct mcf_uart, port);
@@ -364,15 +540,16 @@ static int mcf_startup(struct uart_port *port)
 	writeb(MCFUART_UCR_RXENABLE | MCFUART_UCR_TXENABLE,
 		port->membase + MCFUART_UCR);
 
-	if (port->line != 2) {
+	if (!uart_console(port) && pp->dma_chan_rx && pp->dma_chan_tx) {
+		trace_printk("Using DMA\n");
+		mcf_dma_setup(port);
+		pp->rx_interval = ms_to_ktime(RX_DMA_TIMER_INTERVAL);
+		hrtimer_start(&pp->rx_timer, pp->rx_interval, HRTIMER_MODE_REL);
+		mcf_next_xfer_rx_dma(pp);
+	} else {
 		/* Enable RX interrupts now */
 		pp->imr = MCFUART_UIR_RXREADY;
 		writeb(pp->imr, port->membase + MCFUART_UIMR);
-	}
-
-	if (port->line == 2) {
-		hrtimer_start(&pp->rx_timer, ms_to_ktime(RX_DMA_TIMER_INTERVAL), HRTIMER_MODE_REL);
-		mcf_next_xfer_rx_dma(pp);
 	}
 
 	uart_port_unlock_irqrestore(port, flags);
@@ -389,6 +566,7 @@ static void mcf_shutdown(struct uart_port *port)
 
 	uart_port_lock_irqsave(port, &flags);
 
+	//trace_printk("Shutting down\n");
 	hrtimer_cancel(&pp->rx_timer);
 
 	/* Disable all interrupts now */
@@ -400,6 +578,19 @@ static void mcf_shutdown(struct uart_port *port)
 	writeb(MCFUART_UCR_CMDRESETTX, port->membase + MCFUART_UCR);
 
 	uart_port_unlock_irqrestore(port, flags);
+
+	if (pp->dma_chan_tx) {
+		dmaengine_terminate_all(pp->dma_chan_tx);
+		dma_free_coherent(port->dev, pp->tx_buf_size,
+				  pp->tx_buf, pp->tx_dma_buf);
+	}
+
+	if (pp->dma_chan_rx) {
+		dmaengine_terminate_all(pp->dma_chan_rx);
+		dma_free_coherent(port->dev, pp->rx_buf_size,
+			              pp->rx_buf, pp->dma_buf);
+	}
+
 }
 
 /****************************************************************************/
@@ -830,13 +1021,11 @@ static int mcf_probe(struct platform_device *pdev)
 
 	pp = container_of(port, struct mcf_uart, port);
 	pp->dma_chan_rx = NULL;
+	pp->dma_chan_tx = NULL;
 
-	mcf_dma_setup(port);
-
-	if (port->line == 2) {
-		hrtimer_init(&pp->rx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-		pp->rx_timer.function = mcf_rx_thread;
-	}
+	mcf_uart_dma_chan_setup(port);
+	hrtimer_init(&pp->rx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	pp->rx_timer.function = mcf_rx_thread;
 
 	uart_add_one_port(&mcf_driver, port);
 
