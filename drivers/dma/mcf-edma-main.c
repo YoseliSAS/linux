@@ -42,32 +42,35 @@ static irqreturn_t mcf_edma_err_handler(int irq, void *dev_id)
 	struct fsl_edma_engine *mcf_edma = dev_id;
 	struct edma_regs *regs = &mcf_edma->regs;
 	unsigned int err, ch;
+	bool handled = false;
 
 	err = ioread32(regs->errl);
-	if (!err)
-		return IRQ_NONE;
-
-	for (ch = 0; ch < (EDMA_CHANNELS / 2); ch++) {
-		if (err & BIT(ch)) {
-			fsl_edma_disable_request(&mcf_edma->chans[ch]);
-			iowrite8(EDMA_CERR_CERR(ch), regs->cerr);
-			fsl_edma_err_chan_handler(&mcf_edma->chans[ch]);
+	if (err) {
+		handled = true;
+		for (ch = 0; ch < (EDMA_CHANNELS / 2); ch++) {
+			if (err & BIT(ch)) {
+				trace_printk("An error occured on channel %d", ch);
+				fsl_edma_disable_request(&mcf_edma->chans[ch]);
+				iowrite8(EDMA_CERR_CERR(ch), regs->cerr);
+				fsl_edma_err_chan_handler(&mcf_edma->chans[ch]);
+			}
 		}
 	}
 
 	err = ioread32(regs->errh);
-	if (!err)
-		return IRQ_NONE;
-
-	for (ch = (EDMA_CHANNELS / 2); ch < EDMA_CHANNELS; ch++) {
-		if (err & (BIT(ch - (EDMA_CHANNELS / 2)))) {
-			fsl_edma_disable_request(&mcf_edma->chans[ch]);
-			iowrite8(EDMA_CERR_CERR(ch), regs->cerr);
-			mcf_edma->chans[ch].status = DMA_ERROR;
+	if (err) {
+		handled = true;
+		for (ch = (EDMA_CHANNELS / 2); ch < EDMA_CHANNELS; ch++) {
+			if (err & (BIT(ch - (EDMA_CHANNELS / 2)))) {
+				trace_printk("An error occured on channel %d", ch);
+				fsl_edma_disable_request(&mcf_edma->chans[ch]);
+				iowrite8(EDMA_CERR_CERR(ch), regs->cerr);
+				fsl_edma_err_chan_handler(&mcf_edma->chans[ch]);
+			}
 		}
 	}
 
-	return IRQ_HANDLED;
+	return handled ? IRQ_HANDLED : IRQ_NONE;
 }
 
 static int mcf_edma_irq_init(struct platform_device *pdev,
