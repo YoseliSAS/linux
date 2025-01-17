@@ -63,11 +63,6 @@ static struct resource mcf_uart6_resource[] = {
 		.end   = MCFUART_BASE6 + 0x3fff,
 		.flags = IORESOURCE_MEM,
 	},
-	[1] = {
-		.start = 22,
-		.end   = 23,
-		.flags = IORESOURCE_DMA,
-	},
 	[2] = {
 		.start = MCF_IRQ_UART6,
 		.end   = MCF_IRQ_UART6,
@@ -261,37 +256,25 @@ static struct coldfire_spi_slave spi1_slave_info = {
 
 static struct resource coldfire_spi1_resources[] = {
 	[0] = {
-		.name = "spi-slave-par",
-		.start = MCFGPIO_PAR_SDHCH,	/* PAR_ESDHCH */
-		.end = MCFGPIO_PAR_SDHCL,	/* PAR_ESDHCL */
-		.flags = IORESOURCE_MEM
-	},
-
+		.start = MCFDSPI_BASE1,
+		.end   = MCFDSPI_BASE1 + 0xFF,
+		.flags = IORESOURCE_MEM,
+		},
 	[1] = {
-		.name = "spi-slave-module",
-		.start = MCFDSPI_BASE1,	/* DSPI MCR Base */
-		.end = MCFDSPI_BASE1 + 0xc0,	/* DSPI mem map end */
-		.flags = IORESOURCE_MEM
+		.start = MCF_IRQ_DSPI1,
+		.end   = MCF_IRQ_DSPI1,
+		.flags = IORESOURCE_IRQ,
 	},
-
 	[2] = {
-		.name = "spi-slave-int-level",
-		.start = MCF_INTC1_ICR54,	/* ICR start */
-		.end = MCF_INTC1_ICR54,	/* ICR end */
-		.flags = IORESOURCE_MEM
+		.start = 14,
+		.end   = 15,
+		.flags = IORESOURCE_DMA,
 	},
-
-	[3] = {
-		.name = "spi-slave-int-mask",
-		.start = MCF_INTC1_IMRH,	/* IMRL */
-		.end = MCF_INTC1_IMRH,	/* IMRL */
-		.flags = IORESOURCE_MEM
-	}
 };
 
 static struct platform_device dspi_spi1_device = {
-	.name = "mcf-spi-slave",
-	.id = -1,
+	.name = "fsl-dspi-slave",
+	.id = 1,
 	.resource = coldfire_spi1_resources,
 	.num_resources = ARRAY_SIZE(coldfire_spi1_resources),
 	.dev = {
@@ -300,24 +283,24 @@ static struct platform_device dspi_spi1_device = {
 };
 
 static struct resource mcf_s2tos0_resource[] = {
-	[0] = {
-		.start = MCFINT0_VECBASE + 4,
-		.end   = MCFINT0_VECBASE + 4,
-		.flags = IORESOURCE_IRQ,
-	},
-	[2] = {
-		.start = 28,
-		.end   = 28,
-		.flags = IORESOURCE_REG,
-		.name = "s2tos0_reg",
-	}
+       [0] = {
+               .start = MCFINT0_VECBASE + 4,
+               .end   = MCFINT0_VECBASE + 4,
+               .flags = IORESOURCE_IRQ,
+       },
+       [2] = {
+               .start = 28,
+               .end   = 28,
+               .flags = IORESOURCE_REG,
+               .name = "s2tos0_reg",
+       }
 };
 
 static struct platform_device mcf_s2tos0 = {
-	.name			= "s2tos0_eport",
-	.id			= 0,
-	.num_resources = ARRAY_SIZE(mcf_s2tos0_resource),
-	.resource = mcf_s2tos0_resource,
+       .name                   = "s2tos0_eport",
+       .id                     = 0,
+       .num_resources = ARRAY_SIZE(mcf_s2tos0_resource),
+       .resource = mcf_s2tos0_resource,
 };
 
 static struct platform_device *dlc_next_devices[] __initdata = {
