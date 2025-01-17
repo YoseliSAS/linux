@@ -19,25 +19,29 @@
 #include <asm/mcfpit.h>
 #include <asm/mcfsim.h>
 
-struct dmatmr_regs {
-	u16 *dtmr;
-	u8 *dtxmr;
-	u8 *dter;
-	u32 *dtrr;
-	u32 *dtcr;
-	u32 *dtcn;
-};
+/*
+ * regs->dtmr = priv->base + 0x0;
+ * regs->dtxmr = priv->base + 0x2;
+ * regs->dter = priv->base + 0x3;
+ * regs->dtrr = priv->base + 0x4;
+ * regs->dtcr = priv->base + 0x8;
+ * regs->dtcn = priv->base + 0xc;
+ */
+#define DTMR 0x0
+#define DTXMR 0x2
+#define DTER 0x3
+#define DTRR 0x4
+#define DTCR 0x8
+#define DTCN 0xc
 
 struct dmatmr_priv {
 	void __iomem *base;
 	struct clk *clk;
 	struct platform_device *pdev;
 	unsigned long rate;
-	raw_spinlock_t lock;
 	struct clock_event_device ced;
 	struct clocksource cs;
 	int id;
-	struct dmatmr_regs regs;
 };
 
 static u64 sched_dtim_clk_val;
@@ -50,10 +54,10 @@ static struct dmatmr_priv *ced_to_priv(struct clock_event_device *ced)
 
 static void sys_dtim_init(struct dmatmr_priv *priv)
 {
-	__raw_writel((priv->rate / HZ) - 1, priv->regs.dtrr);
-	__raw_writew(BIT(4) | BIT(1) | BIT(0), priv->regs.dtmr);
-	__raw_writeb(0, priv->regs.dtxmr);
-	__raw_writeb(1, priv->regs.dter);
+	__raw_writel((priv->rate / HZ) - 1, priv->base + DTRR);
+	__raw_writew(BIT(4) | BIT(1) | BIT(0), priv->base + DTMR);
+	__raw_writeb(0, priv->base + DTXMR);
+	__raw_writeb(1, priv->base + DTER);
 
 	dev_info(&priv->pdev->dev, "Initialized for sched_clock at %d hz", HZ);
 }
@@ -65,29 +69,30 @@ static inline u64 read_dtcn(void)
 
 static u64 notrace sys_dtim_read(void)
 {
-	return sched_dtim_clk_val + read_dtcn();
+	return READ_ONCE(sched_dtim_clk_val) + read_dtcn();
 }
 
 static u64 cfv4_read_dtimvalue(struct clocksource *cs)
 {
-	return sys_dtim_read();
+	u64 val;
+
+	val = sys_dtim_read();
+
+	return val;
 }
 
 static int cfv4_set_next_event(unsigned long delta,
 	struct clock_event_device *dev)
 {
 	struct dmatmr_priv *priv = ced_to_priv(dev);
-	unsigned long flags;
 
-	raw_spin_lock_irqsave(&priv->lock, flags);
 	/* read timer value */
 	sched_dtim_clk_val += read_dtcn();
-	raw_spin_unlock_irqrestore(&priv->lock, flags);
 
 	/* reset timer with delta cycle */
-	__raw_writew(0, priv->regs.dtmr);
-	__raw_writel(delta, priv->regs.dtrr);
-	__raw_writew(BIT(4) | BIT(1) | BIT(0), priv->regs.dtmr);
+	__raw_writew(0, priv->base + DTMR);
+	__raw_writel(delta, priv->base + DTRR);
+	__raw_writew(BIT(4) | BIT(1) | BIT(0), priv->base + DTMR);
 
 	return 0;
 }
@@ -95,29 +100,23 @@ static int cfv4_set_next_event(unsigned long delta,
 static int cfv4_set_oneshot(struct clock_event_device *dev)
 {
 	struct dmatmr_priv *priv = ced_to_priv(dev);
-	unsigned long flags;
 
 	/* read timer value */
-	raw_spin_lock_irqsave(&priv->lock, flags);
 	sched_dtim_clk_val += read_dtcn();
-	raw_spin_unlock_irqrestore(&priv->lock, flags);
 
-	__raw_writew(0, priv->regs.dtmr);
+	__raw_writew(0, priv->base + DTMR);
 	return 0;
 }
 
 static irqreturn_t coldfire_dtim_clk_irq(int irq, void *dev)
 {
 	struct dmatmr_priv *priv = dev;
-	unsigned long flags;
 
 	/* acknowledge the IRQ */
-	__raw_writeb(BIT(0) | BIT(1), priv->regs.dter);
+	__raw_writeb(BIT(0) | BIT(1), priv->base + DTER);
 
 	/* read timer value */
-	raw_spin_lock_irqsave(&priv->lock, flags);
 	sched_dtim_clk_val += read_dtcn();
-	raw_spin_unlock_irqrestore(&priv->lock, flags);
 
 	/* restart counter */
 	__raw_writel(0, dmatmr_sched_clk_counter);
@@ -159,18 +158,6 @@ static void mcf_dma_register_clockevent(struct dmatmr_priv *priv)
 	clockevents_config_and_register(ced, priv->rate, 2, 0xffffffff);
 }
 
-static void mcf_dma_init_registers(struct dmatmr_priv *priv)
-{
-	struct dmatmr_regs *regs = &priv->regs;
-
-	regs->dtmr = priv->base + 0x0;
-	regs->dtxmr = priv->base + 0x2;
-	regs->dter = priv->base + 0x3;
-	regs->dtrr = priv->base + 0x4;
-	regs->dtcr = priv->base + 0x8;
-	regs->dtcn = priv->base + 0xc;
-}
-
 static int __init mcf_dma_timer_probe(struct platform_device *pdev)
 {
 	struct dmatmr_priv *priv;
@@ -203,8 +190,9 @@ static int __init mcf_dma_timer_probe(struct platform_device *pdev)
 
 	prio_reg = platform_get_resource_byname(pdev, IORESOURCE_REG, "prio_reg");
 	if (prio_reg) {
-		/* Enhance the interrupt priority */
-		__raw_writeb(5, prio_reg->start);
+		/* Enhance the interrupt priority (0 == disabled) */
+		__raw_writeb(4, prio_reg->start);
+		dev_info(&pdev->dev, "Enhance priority to 4\n");
 	}
 
 	priv->clk = devm_clk_get_enabled(&pdev->dev, NULL);
@@ -215,10 +203,7 @@ static int __init mcf_dma_timer_probe(struct platform_device *pdev)
 
 	priv->rate = clk_get_rate(priv->clk);
 
-	raw_spin_lock_init(&priv->lock);
-
-	mcf_dma_init_registers(priv);
-	dmatmr_sched_clk_counter = priv->regs.dtcn;
+	dmatmr_sched_clk_counter = priv->base + DTCN;
 
 	mcf_dma_register_clockevent(priv);
 	mcf_dma_register_clocksource(priv);
