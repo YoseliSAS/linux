@@ -459,8 +459,8 @@ static const struct dma_slave_map mcf_edma_map[] = {
 	{ "timer3", "rx-tx", MCF_EDMA_FILTER_PARAM(11) },
 	{ "fsl-dspi.0", "rx", MCF_EDMA_FILTER_PARAM(12) },
 	{ "fsl-dspi.0", "tx", MCF_EDMA_FILTER_PARAM(13) },
-	{ "fsl-dspi.1", "rx", MCF_EDMA_FILTER_PARAM(14) },
-	{ "fsl-dspi.1", "tx", MCF_EDMA_FILTER_PARAM(15) },
+	{ "fsl-dspi-slave.1", "rx", MCF_EDMA_FILTER_PARAM(14) },
+	{ "fsl-dspi-slave.1", "tx", MCF_EDMA_FILTER_PARAM(15) },
 	{ "mcfuart.6", "rx", MCF_EDMA_FILTER_PARAM(22) },
 	{ "mcfuart.6", "tx", MCF_EDMA_FILTER_PARAM(23) },
 };
