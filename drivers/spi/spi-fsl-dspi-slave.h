@@ -1,57 +1,95 @@
 #ifndef __FSL_DSPI_SLAVE_H__
 #define __FSL_DSPI_SLAVE_H__
 
+#define SPI_MCR				0x00
+#define SPI_MCR_HOST			BIT(31)
+#define SPI_MCR_ROOE			BIT(24)
+#define SPI_MCR_PCSIS(x)		((x) << 16)
+#define SPI_MCR_CLR_TXF			BIT(11)
+#define SPI_MCR_CLR_RXF			BIT(10)
+#define SPI_MCR_XSPI			BIT(3)
+#define SPI_MCR_DIS_TXF			BIT(13)
+#define SPI_MCR_DIS_RXF			BIT(12)
+#define SPI_MCR_HALT			BIT(0)
+
+#define SPI_TCR				0x08
+#define SPI_TCR_GET_TCNT(x)		(((x) & GENMASK(31, 16)) >> 16)
+
+#define SPI_CTAR(x)			(0x0c + (((x) & GENMASK(1, 0)) * 4))
+#define SPI_CTAR_FMSZ(x)		(((x) << 27) & GENMASK(30, 27))
+#define SPI_CTAR_CPOL			BIT(26)
+#define SPI_CTAR_CPHA			BIT(25)
+#define SPI_CTAR_LSBFE			BIT(24)
+#define SPI_CTAR_PCSSCK(x)		(((x) << 22) & GENMASK(23, 22))
+#define SPI_CTAR_PASC(x)		(((x) << 20) & GENMASK(21, 20))
+#define SPI_CTAR_PDT(x)			(((x) << 18) & GENMASK(19, 18))
+#define SPI_CTAR_PBR(x)			(((x) << 16) & GENMASK(17, 16))
+#define SPI_CTAR_CSSCK(x)		(((x) << 12) & GENMASK(15, 12))
+#define SPI_CTAR_ASC(x)			(((x) << 8) & GENMASK(11, 8))
+#define SPI_CTAR_DT(x)			(((x) << 4) & GENMASK(7, 4))
+#define SPI_CTAR_BR(x)			((x) & GENMASK(3, 0))
+#define SPI_CTAR_SCALE_BITS		0xf
+
+#define SPI_CTAR0_SLAVE			0x0c
+
+#define SPI_SR				0x2c
+#define SPI_SR_TCFQF			BIT(31)
+#define SPI_SR_TFUF			BIT(27)
+#define SPI_SR_TFFF			BIT(25)
+#define SPI_SR_CMDTCF			BIT(23)
+#define SPI_SR_SPEF			BIT(21)
+#define SPI_SR_RFOF			BIT(19)
+#define SPI_SR_TFIWF			BIT(18)
+#define SPI_SR_RFDF			BIT(17)
+#define SPI_SR_CMDFFF			BIT(16)
+#define SPI_SR_CLEAR			(SPI_SR_TCFQF | \
+					SPI_SR_TFUF | SPI_SR_TFFF | \
+					SPI_SR_CMDTCF | SPI_SR_SPEF | \
+					SPI_SR_RFOF | SPI_SR_TFIWF | \
+					SPI_SR_RFDF | SPI_SR_CMDFFF)
+
+#define SPI_RSER_TFUFE			BIT(27)
+#define SPI_RSER_TFFFE			BIT(25)
+#define SPI_RSER_TFFFD			BIT(24)
+#define SPI_RSER_RFDFE			BIT(17)
+#define SPI_RSER_RFDFD			BIT(16)
+
+#define SPI_RSER			0x30
+#define SPI_RSER_TCFQE			BIT(31)
+#define SPI_RSER_CMDTCFE		BIT(23)
+
+#define SPI_PUSHR			0x34
+#define SPI_PUSHR_CMD_CONT		BIT(15)
+#define SPI_PUSHR_CMD_CTAS(x)		(((x) << 12 & GENMASK(14, 12)))
+#define SPI_PUSHR_CMD_EOQ		BIT(11)
+#define SPI_PUSHR_CMD_CTCNT		BIT(10)
+#define SPI_PUSHR_CMD_PCS(x)		(BIT(x) & GENMASK(5, 0))
+
+#define SPI_PUSHR_SLAVE			0x34
+
+#define SPI_POPR			0x38
+
+#define SPI_TXFR0			0x3c
+#define SPI_TXFR1			0x40
+#define SPI_TXFR2			0x44
+#define SPI_TXFR3			0x48
+#define SPI_RXFR0			0x7c
+#define SPI_RXFR1			0x80
+#define SPI_RXFR2			0x84
+#define SPI_RXFR3			0x88
+
+#define SPI_CTARE(x)			(0x11c + (((x) & GENMASK(1, 0)) * 4))
+#define SPI_CTARE_FMSZE(x)		(((x) & 0x1) << 16)
+#define SPI_CTARE_DTCP(x)		((x) & 0x7ff)
+
+#define SPI_SREX			0x13c
+
+#define SPI_FRAME_BITS(bits)		SPI_CTAR_FMSZ((bits) - 1)
+#define SPI_FRAME_EBITS(bits)		SPI_CTARE_FMSZE(((bits) - 1) >> 4)
+
 /*
  * Local Data Structures
  */
-
-struct DSPI_MCR {
-	unsigned master:1;
-	unsigned cont_scke:1;
-	unsigned dconf:2;
-	unsigned frz:1;
-	unsigned mtfe:1;
-	unsigned pcsse:1;
-	unsigned rooe:1;
-	unsigned pcsis:8;
-	unsigned reserved15:1;
-	unsigned mdis:1;
-	unsigned dis_tx:1;
-	unsigned dis_rxf:1;
-	unsigned clr_tx:1;
-	unsigned clr_rxf:1;
-	unsigned smpl_pt:2;
-	unsigned reserved71:7;
-	unsigned halt:1;
-};
-
-struct DSPI_CTAR {
-	unsigned dbr:1;
-	unsigned fmsz:4;
-	unsigned cpol:1;
-	unsigned cpha:1;
-	unsigned lsbfe:1;
-	unsigned pcssck:2;
-	unsigned pasc:2;
-	unsigned pdt:2;
-	unsigned pbr:2;
-	unsigned cssck:4;
-	unsigned asc:4;
-	unsigned dt:4;
-	unsigned br:4;
-};
-
-struct chip_data {
-	/* dspi data */
-	union {
-		u32 mcr_val;
-		struct DSPI_MCR mcr;
-	};
-	union {
-		u32 ctar_val;
-		struct DSPI_CTAR ctar;
-	};
-};
 
 typedef enum {
 	DSPI_SLAVE_STATE_IDLE,
@@ -63,9 +101,17 @@ typedef enum {
 
 struct dspi_slave_perf {
 	ktime_t irq_received;
-	ktime_t frame_sent;
 	ktime_t wait_next_frame;
+	u64 frame_sent;
+	u64 latency;
+	u64 max_latency;
+	u64 min_latency;
 	u64 frame_number;
+};
+
+enum dspi_trans_mode {
+	DSPI_POLLING_MODE,
+	DSPI_DMA_MODE,
 };
 
 struct driver_data {
@@ -86,42 +132,63 @@ struct driver_data {
 	int chrdev_major;
 	struct class *chrdev_class;
 	struct device *chrdev;
-	struct siginfo sinfo;
-	struct task_struct *task_user;
 
-	/* Current message transfer state info */
-	struct chip_data *cur_chip;
-	u8 cs;
-
-	volatile u32 mcr;		/* DSPI MCR register */
-	volatile u32 ctar;		/* DSPI CTAR register */
-	volatile u32 dspi_dtfr;		/* DSPI DTFR register */
-	volatile u32 dspi_drfr;		/* DSPI DRFR register */
-	volatile u32 dspi_rser;		/* DSPI RSER register */
-	volatile u32 dspi_sr;		/* DSPI status register */
+	phys_addr_t 				dspi_base;
+	struct regmap				*regmap;
+	struct regmap				*regmap_pushr;
+	u32 irq_status;
 
 	u8  *int_icr;	   /* Interrupt level and priority register */
 	u32 *int_mr;       /* Interrupt mask register */
 
-	u8 stream_restarted; /* Boolean to unblock read() during failover */
-
 	/* mmap */
-	u16 *mmap_buffer;
-	size_t mmap_buffer_size;
+	//u16 *mmap_buffer;
+	u16 rx_buffer[32];
+	u16 tx_buffer[32];
 
 	/* locking */
-	struct mutex lock;
+	local_lock_t 				lock;
 
-	struct completion read_complete;
+	struct completion 			read_complete;
+	struct completion 			write_complete;
+	struct completion			read_error_complete;
 
-	struct task_struct	*kthread;
-	dspi_slave_state_t	state;
+	struct task_struct			*read_error_task;
+
+	dspi_slave_state_t			state;
 
 	/* Add time measurement variables */
-	struct dspi_slave_perf frame_perf;
-	ktime_t average_frame_time;
-	ktime_t min_frame_time;
-	ktime_t max_frame_time;
+	struct dspi_slave_perf 			frame_perf;
+	ktime_t 				average_frame_time;
+	ktime_t 				min_frame_time;
+	ktime_t 				max_frame_time;
+
+	/* DMA */
+	struct dma_chan				*chan_rx;
+	dma_addr_t				rx_dma_phys;
+	u32					*rx_dma_buf;
+	u32					rx_dma_buf_size;
+	u32					rx_period_length;
+	u32					rx_dma_buf_offset;
+	dma_cookie_t				rx_cookie;
+	struct dma_async_tx_descriptor 		*rx_desc;
+	atomic_t				rx_dma_running;
+	int 					rx_priority;
+
+	struct dma_chan				*chan_tx;
+	dma_addr_t				tx_dma_phys;
+	u32					*tx_dma_buf;
+	u32					tx_dma_buf_size;
+	u32					tx_period_length;
+	u32					tx_dma_buf_offset;
+	dma_cookie_t				tx_cookie;
+	struct dma_async_tx_descriptor 		*tx_desc;
+	atomic_t				tx_dma_running;
+	int 					tx_priority;
+
+	u8					mode;
+
+	wait_queue_head_t			wq_tx;
 };
 
 /* Define ioctl commands */
