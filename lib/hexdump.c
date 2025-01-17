@@ -10,6 +10,7 @@
 #include <linux/minmax.h>
 #include <linux/export.h>
 #include <linux/unaligned.h>
+#include <linux/string.h>
 
 const char hex_asc[] = "0123456789abcdef";
 EXPORT_SYMBOL(hex_asc);
@@ -291,5 +292,39 @@ void print_hex_dump(const char *level, const char *prefix_str, int prefix_type,
 	}
 }
 EXPORT_SYMBOL(print_hex_dump);
+
+void trace_print_hex_dump(const char *prefix_str, int prefix_type,
+		    int rowsize, int groupsize,
+		    const void *buf, size_t len, bool ascii)
+{
+	const u8 *ptr = buf;
+	int i, linelen, remaining = len;
+	unsigned char linebuf[32 * 3 + 2 + 32 + 1];
+
+	if (rowsize != 16 && rowsize != 32)
+		rowsize = 16;
+
+	for (i = 0; i < len; i += rowsize) {
+		linelen = min(remaining, rowsize);
+		remaining -= rowsize;
+
+		hex_dump_to_buffer(ptr + i, linelen, rowsize, groupsize,
+				   linebuf, sizeof(linebuf), ascii);
+
+		switch (prefix_type) {
+		case DUMP_PREFIX_ADDRESS:
+			trace_printk("%s%p: %s\n",
+			       prefix_str, ptr + i, linebuf);
+			break;
+		case DUMP_PREFIX_OFFSET:
+			trace_printk("%s%.8x: %s\n", prefix_str, i, linebuf);
+			break;
+		default:
+			trace_printk("%s%s\n", prefix_str, linebuf);
+			break;
+		}
+	}
+}
+EXPORT_SYMBOL(trace_print_hex_dump);
 
 #endif /* defined(CONFIG_PRINTK) */
