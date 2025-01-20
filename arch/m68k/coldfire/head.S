@@ -203,6 +203,10 @@ _start:
 	movel	#ACR3_MODE,%d0
 	movec	%d0,%ACR3
 #endif
+#ifdef ACR4_MODE
+	movel	#ACR4_MODE,%d0
+	movec	%d0,%ACR4
+#endif
 	movel	#CACHE_MODE,%d0			/* enable cache */
 	movec	%d0,%CACR
 	nop
