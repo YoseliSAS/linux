@@ -20,6 +20,9 @@
 #define	MCFGPIO_PAR_FBCTL_TA_MASK	0xFC
 #define MCFGPIO_PAR_FBCTL_TA_NFC_RB	0x01
 
+#define MCFGPIO_SRCR_IRQ0		0xec09406a
+#define MCFGPIO_SRCR_SDHC		0xec09406e
+
 /* ethernet mac addresses from uboot */
 unsigned char uboot_enet0[6] = {0};
 EXPORT_SYMBOL(uboot_enet0);
