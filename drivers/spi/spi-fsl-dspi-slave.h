@@ -91,14 +91,6 @@
  * Local Data Structures
  */
 
-typedef enum {
-	DSPI_SLAVE_STATE_IDLE,
-	DSPI_SLAVE_STATE_RX,
-	DSPI_SLAVE_STATE_RX_DONE,
-	DSPI_SLAVE_STATE_TX,
-	DSPI_SLAVE_STATE_RESTART,
-} dspi_slave_state_t;
-
 struct dspi_slave_perf {
 	ktime_t irq_received;
 	ktime_t wait_next_frame;
@@ -154,8 +146,6 @@ struct driver_data {
 	struct completion			read_error_complete;
 
 	struct task_struct			*read_error_task;
-
-	dspi_slave_state_t			state;
 
 	/* Add time measurement variables */
 	struct dspi_slave_perf 			frame_perf;
