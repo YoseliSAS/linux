@@ -265,12 +265,11 @@ static inline int wait_for_txctr(unsigned long timeout_ns)
 			return -EIO;
 		}
 
-		if (((value >> 12) & 0xF) == 15)
+		if (((value >> 12) & 0xF) == 0)
 			return 0; // Succès
 
 		cur_time = ktime_get_raw_fast_ns();
 		if ((cur_time - start_time) >= timeout_ns) {
-			trace_printk("Timeout while waiting for RFDF bit to be set\n");
 			return -ETIMEDOUT;
 		}
 
@@ -309,6 +308,39 @@ static inline void dspi_setup_chip(struct driver_data *drv_data)
 			     SPI_RSER_TFFFE | SPI_RSER_TFFFD |
 			     SPI_RSER_RFDFE | SPI_RSER_RFDFD);
 	}
+}
+
+static void dspi_stop_hw(void)
+{
+	regmap_write(chrdev_drvdata->regmap, SPI_MCR, 1);
+	if (chrdev_drvdata->mode == DSPI_DMA_MODE) {
+		if (atomic_read(&chrdev_drvdata->rx_dma_running) ||
+		    atomic_read(&chrdev_drvdata->tx_dma_running)) {
+			trace_printk("RX DMA running => false\n");
+			atomic_set(&chrdev_drvdata->rx_dma_running, 0);
+			trace_printk("TX DMA running => false\n");
+			atomic_set(&chrdev_drvdata->tx_dma_running, 0);
+			dmaengine_terminate_all(chrdev_drvdata->chan_rx);
+			dmaengine_terminate_all(chrdev_drvdata->chan_tx);
+			/*dma_free_coherent(chrdev_drvdata->chan_rx->device->dev, chrdev_drvdata->rx_dma_buf_size,
+					  chrdev_drvdata->rx_dma_buf, chrdev_drvdata->rx_dma_phys);
+			dma_free_coherent(chrdev_drvdata->chan_tx->device->dev, chrdev_drvdata->tx_dma_buf_size,
+					  chrdev_drvdata->tx_dma_buf, chrdev_drvdata->tx_dma_phys);
+			chrdev_drvdata->rx_dma_buf = NULL;
+			chrdev_drvdata->tx_dma_buf = NULL;
+			trace_printk("Freed DMA buffers\n");*/
+		}
+	}
+}
+
+static void dspi_start_hw(void)
+{
+	/* Reset HW TX & HW RX fifo */
+	hwfifo_prepare(chrdev_drvdata);
+
+	//chrdev_drvdata->cur_chip->mcr.halt = 0;
+	regmap_update_bits(chrdev_drvdata->regmap, SPI_MCR, SPI_MCR_HALT, 0);
+	dspi_setup_chip(chrdev_drvdata);
 }
 
 /****************************************************************************/
@@ -767,18 +799,6 @@ static ssize_t chrdev_device_read(struct file *filp,
 
 	/* If RX Fifo is not full, we block the caller */
 	status = wait_for_completion_interruptible_timeout(&chrdev_drvdata->read_complete, msecs_to_jiffies(ktime_to_ms(read_fifo_timeout)));
-	switch(chrdev_drvdata->state) {
-		case DSPI_SLAVE_STATE_IDLE:
-		case DSPI_SLAVE_STATE_RX:
-			break;
-		case DSPI_SLAVE_STATE_RESTART:
-			/* If we are in restart state, we return 0 */
-			trace_printk("DSPI_SLAVE_STATE_RESTART\n");
-			return 0;
-		default:
-			trace_printk("%s: Wrong state %d\n", __func__, chrdev_drvdata->state);
-			/* Blocking read() return 0 after signal */
-	}
 
 	if (status == 0) {
 #ifndef CONFIG_TRACING
@@ -812,7 +832,6 @@ static ssize_t chrdev_device_read(struct file *filp,
 	dma_unmap_single(chrdev_drvdata->chan_rx->device->dev, chrdev_drvdata->rx_dma_phys,
 			 SPISLAVE_MSG_FIFO_SIZE * 2, DMA_FROM_DEVICE);
 */
-	chrdev_drvdata->state = DSPI_SLAVE_STATE_RX_DONE;
 
 	if (status) {
 		trace_printk("Error while copying data to user: %d\n", status);
@@ -835,37 +854,28 @@ static ssize_t chrdev_device_write(struct file *filp,
 #ifdef DSPI_DEBUG_TRACE
 	trace_printk("Write frame\n");
 #endif
-	if (chrdev_drvdata->mode == DSPI_DMA_MODE) {
+	if (chrdev_drvdata->mode != DSPI_DMA_MODE) {
 		status = __copy_from_user_inatomic(chrdev_drvdata->tx_buffer, buffer, length);
 
 		dspi_slave_next_xfer_tx_dma(chrdev_drvdata);
 	} else {
-		regmap_read(chrdev_drvdata->regmap, SPI_SR, &chrdev_drvdata->irq_status);
-
 		/* Check length is SPISLAVE_MSG_FIFO_SIZE */
 		if (unlikely(length != SPISLAVE_MSG_FIFO_SIZE)) {
 			return -EINVAL;
 		}
 
-		/* Check TX FIFO is empty. */
-		if (!(chrdev_drvdata->irq_status & MCF_DSPI_DSR_TFFF)) {
-			trace_printk("HW TX fifo is full !\n");
-			return -EBUSY;
-		}
-
-		//(txctr = MCF_DSPI_DSR_GET_TXCTR(*(volatile u32 *)chrdev_drvdata->dspi_sr)
-		//#define MCF_DSPI_DSR_GET_TXCTR(x) (((x)>>12)&0x0000000F)
-		txctr = (chrdev_drvdata->irq_status >> 12) & 0x0000000F;
+		txctr = wait_for_txctr(1000000); //(chrdev_drvdata->irq_status >> 12) & 0x0000000F;
 
 		if (txctr != 0) {
-			trace_printk("HW TX fifo not empty (txctr = %u) !\n", txctr);
-			hwfifo_prepare(chrdev_drvdata);
+			trace_printk("HW TX fifo not empty, drain\n");
+			/* Drain TX fifo */
+			regmap_update_bits(chrdev_drvdata->regmap, SPI_MCR, SPI_MCR_CLR_TXF, SPI_MCR_CLR_TXF);
 			return -EIO;
 		}
 
-		chrdev_drvdata->state = DSPI_SLAVE_STATE_TX;
-
 		preempt_disable();
+		reinit_completion(&chrdev_drvdata->write_complete);
+
 		/* Push whole buffer in TX fifo */
 		status = __copy_from_user_inatomic(chrdev_drvdata->tx_buffer, buffer, length);
 		//status = kfifo_from_user(&tx_kfifo, buffer, length, &nb_bytes);
@@ -875,83 +885,15 @@ static ssize_t chrdev_device_write(struct file *filp,
 		if (status == 0)
 			nb_bytes = kfifo_tx_kfifo_to_hw(chrdev_drvdata);
 
+		complete(&chrdev_drvdata->write_complete);
 		preempt_enable();
 	}
 	chrdev_drvdata->frame_perf.frame_sent = ktime_get_raw_fast_ns();
 #ifdef DSPI_DEBUG_TRACE
 	trace_printk("Write %d bytes to HW FIFO\n", nb_bytes / 2);
 #endif
-	chrdev_drvdata->state = DSPI_SLAVE_STATE_IDLE;
+
 	return status ? status : nb_bytes;
-}
-
-static int chrdev_device_fsync (struct file *filp, loff_t start, loff_t end, int datasync)
-{
-	reinit_timeout(DSPI_SLAVE_TIMEOUT_MS);
-//#ifdef DSPI_DEBUG_TRACE
-		trace_printk("fsync\n");
-//#endif
-
-	regmap_update_bits(chrdev_drvdata->regmap, SPI_MCR, SPI_MCR_HALT, 1);
-
-	trace_printk("RX DMA running => false\n");
-	atomic_set(&chrdev_drvdata->rx_dma_running, 0);
-	trace_printk("TX DMA running => false\n");
-	atomic_set(&chrdev_drvdata->tx_dma_running, 0);
-	dmaengine_terminate_all(chrdev_drvdata->chan_rx);
-	dmaengine_terminate_all(chrdev_drvdata->chan_tx);
-
-	chrdev_drvdata->rx_dma_buf_offset = 0;
-	chrdev_drvdata->tx_dma_buf_offset = 0;
-
-	dspi_setup_chip(chrdev_drvdata);
-
-	hwfifo_prepare(chrdev_drvdata);
-
-	regmap_update_bits(chrdev_drvdata->regmap, SPI_MCR, SPI_MCR_HALT, 1);
-
-	dspi_setup_chip(chrdev_drvdata);
-
-	dspi_slave_next_xfer_rx_dma(chrdev_drvdata);
-
-	return 0;
-}
-
-/*
- * /dev callbacks
- */
-
-static void dspi_stop_hw(void)
-{
-	regmap_write(chrdev_drvdata->regmap, SPI_MCR, 1);
-	if (chrdev_drvdata->mode == DSPI_DMA_MODE) {
-		if (atomic_read(&chrdev_drvdata->rx_dma_running) ||
-		    atomic_read(&chrdev_drvdata->tx_dma_running)) {
-			trace_printk("RX DMA running => false\n");
-			atomic_set(&chrdev_drvdata->rx_dma_running, 0);
-			trace_printk("TX DMA running => false\n");
-			atomic_set(&chrdev_drvdata->tx_dma_running, 0);
-			dmaengine_terminate_all(chrdev_drvdata->chan_rx);
-			dmaengine_terminate_all(chrdev_drvdata->chan_tx);
-			/*dma_free_coherent(chrdev_drvdata->chan_rx->device->dev, chrdev_drvdata->rx_dma_buf_size,
-					  chrdev_drvdata->rx_dma_buf, chrdev_drvdata->rx_dma_phys);
-			dma_free_coherent(chrdev_drvdata->chan_tx->device->dev, chrdev_drvdata->tx_dma_buf_size,
-					  chrdev_drvdata->tx_dma_buf, chrdev_drvdata->tx_dma_phys);
-			chrdev_drvdata->rx_dma_buf = NULL;
-			chrdev_drvdata->tx_dma_buf = NULL;
-			trace_printk("Freed DMA buffers\n");*/
-		}
-	}
-}
-
-static void dspi_start_hw(void)
-{
-	/* Reset HW TX & HW RX fifo */
-	hwfifo_prepare(chrdev_drvdata);
-
-	//chrdev_drvdata->cur_chip->mcr.halt = 0;
-	regmap_write(chrdev_drvdata->regmap, SPI_MCR, 0);
-	dspi_setup_chip(chrdev_drvdata);
 }
 
 static void sync_spi_hw(void)
@@ -961,9 +903,47 @@ static void sync_spi_hw(void)
 	dspi_stop_hw();
 
 	dspi_slave_dma_setup(chrdev_drvdata);
-
-	chrdev_drvdata->state = DSPI_SLAVE_STATE_IDLE;
 }
+
+static int chrdev_device_fsync (struct file *filp, loff_t start, loff_t end, int datasync)
+{
+	reinit_timeout(DSPI_SLAVE_TIMEOUT_MS);
+//#ifdef DSPI_DEBUG_TRACE
+		trace_printk("fsync\n");
+//#endif
+
+	if (!regmap_test_bits(chrdev_drvdata->regmap, SPI_MCR, SPI_MCR_HALT)) {
+		regmap_update_bits(chrdev_drvdata->regmap, SPI_MCR, SPI_MCR_HALT, 1);
+		dmaengine_terminate_all(chrdev_drvdata->chan_rx);
+		dmaengine_terminate_all(chrdev_drvdata->chan_tx);
+		atomic_set(&chrdev_drvdata->rx_dma_running, 0);
+		atomic_set(&chrdev_drvdata->tx_dma_running, 0);
+		reinit_completion(&chrdev_drvdata->read_complete);
+		reinit_completion(&chrdev_drvdata->write_complete);
+
+		chrdev_drvdata->rx_dma_buf_offset = 0;
+		chrdev_drvdata->tx_dma_buf_offset = 0;
+	}
+
+	chrdev_drvdata->frame_perf.latency = 0;
+	chrdev_drvdata->frame_perf.max_latency = 0;
+	chrdev_drvdata->frame_perf.min_latency = KTIME_MAX;
+	chrdev_drvdata->frame_perf.frame_number = 0;
+
+	dspi_setup_chip(chrdev_drvdata);
+
+	sync_spi_hw();
+
+	dspi_start_hw();
+
+	dspi_slave_next_xfer_rx_dma(chrdev_drvdata);
+
+	return 0;
+}
+
+/*
+ * /dev callbacks
+ */
 
 static int dspi_error_task(void *data)
 {
@@ -980,7 +960,6 @@ static int dspi_error_task(void *data)
 		sync_spi_hw();
 
 		dspi_start_hw();
-		chrdev_drvdata->state = DSPI_SLAVE_STATE_IDLE;
 	}
 
 	return 0;
@@ -1001,31 +980,22 @@ static int chrdev_device_open(struct inode *inode, struct file *filp)
 
 	filp->private_data = inode->i_private;
 
-	reinit_timeout(DSPI_SLAVE_TIMEOUT_MS);
+	trace_printk("Init completions\n");
+	init_completion(&chrdev_drvdata->read_complete);
+	init_completion(&chrdev_drvdata->write_complete);
 
-	if (chrdev_drvdata->mode == DSPI_DMA_MODE) {
-		chrdev_drvdata->frame_perf.latency = 0;
-		chrdev_drvdata->frame_perf.max_latency = 0;
-		chrdev_drvdata->frame_perf.min_latency = KTIME_MAX;
-		chrdev_drvdata->frame_perf.frame_number = 0;
-		trace_printk("Init completions\n");
-		init_completion(&chrdev_drvdata->read_complete);
-		init_completion(&chrdev_drvdata->write_complete);
-		chrdev_drvdata->rx_dma_buf_offset = 0;
-		chrdev_drvdata->tx_dma_buf_offset = 0;
-	}
-	init_completion(&chrdev_drvdata->read_error_complete);
+	if (chrdev_drvdata->mode != DSPI_DMA_MODE) {
+		init_completion(&chrdev_drvdata->read_error_complete);
 
 #ifdef DSPI_DEBUG_TRACE
-	trace_printk("Create dspi error task thread\n");
+		trace_printk("Create dspi error task thread\n");
 #endif
-	chrdev_drvdata->read_error_task = kthread_run(dspi_error_task, chrdev_drvdata, "dspi_error_task");
-	if (IS_ERR(chrdev_drvdata->read_error_task)) {
-		mutex_unlock(&chrdev_client_mutex);
-		return PTR_ERR(chrdev_drvdata->read_error_task);
+		chrdev_drvdata->read_error_task = kthread_run(dspi_error_task, chrdev_drvdata, "dspi_error_task");
+		if (IS_ERR(chrdev_drvdata->read_error_task)) {
+			mutex_unlock(&chrdev_client_mutex);
+			return PTR_ERR(chrdev_drvdata->read_error_task);
+		}
 	}
-
-	chrdev_drvdata->state = DSPI_SLAVE_STATE_IDLE;
 
 	trace_printk("open\n");
 	return 0;
@@ -1253,7 +1223,6 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 			drv_data->stat_spi_nbbytes_recv += 2;
 			i++;
 		}
-		drv_data->state = DSPI_SLAVE_STATE_RX;
 		drv_data->frame_perf.irq_received = ktime_get_raw_fast_ns();
 		drv_data->frame_perf.frame_number++;
 		//trace_printk("get %04x\n", drv_data->mmap_buffer[0]);
@@ -1266,7 +1235,6 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	if (restart_dspi) {
 		/* Here, we missed some data.
 		 * we need to reset the whole DSPI block to clear fifo */
-		drv_data->state = DSPI_SLAVE_STATE_RESTART;
 
 		complete(&drv_data->read_error_complete);
 	}
@@ -1396,8 +1364,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	}
 
 	drv_data->pdev = pdev;
-
-	drv_data->state = DSPI_SLAVE_STATE_IDLE;
 
 	drv_data->dspi_base = res->start;
 	dspi_slave_dma_setup_channel(drv_data);
