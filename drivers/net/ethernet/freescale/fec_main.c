@@ -415,7 +415,7 @@ static void fec_dump(struct net_device *ndev)
  * Coldfire does not support DMA coherent allocations, and has historically used
  * a band-aid with a manual flush in fec_enet_rx_queue.
  */
-#if defined(CONFIG_COLDFIRE) && !defined(CONFIG_COLDFIRE_COHERENT_DMA)
+#if 0//defined(CONFIG_COLDFIRE) && !defined(CONFIG_COLDFIRE_COHERENT_DMA)
 static void *fec_dma_alloc(struct device *dev, size_t size, dma_addr_t *handle,
 		gfp_t gfp)
 {
@@ -1813,7 +1813,7 @@ fec_enet_rx_queue(struct net_device *ndev, u16 queue_id, int budget)
 	}
 #endif
 
-#if defined(CONFIG_COLDFIRE) && !defined(CONFIG_COLDFIRE_COHERENT_DMA)
+#if 0//defined(CONFIG_COLDFIRE) && !defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	/*
 	 * Hacky flush of all caches instead of using the DMA API for the TSO
 	 * headers.
@@ -1852,7 +1852,8 @@ fec_enet_rx_queue(struct net_device *ndev, u16 queue_id, int budget)
 				/* Frame too long or too short. */
 				ndev->stats.rx_length_errors++;
 				if (status & BD_ENET_RX_LAST)
-					netdev_err(ndev, "rcv is not +last\n");
+					netdev_err(ndev, "rcv is not +last (status = 0x%04x)\n",
+						    status);
 			}
 			if (status & BD_ENET_RX_CR)	/* CRC Error */
 				ndev->stats.rx_crc_errors++;
