@@ -72,11 +72,14 @@ void fsl_edma_err_chan_handler(struct fsl_edma_chan *fsl_chan)
 
 void fsl_edma_tx_chan_handler(struct fsl_edma_chan *fsl_chan)
 {
-	spin_lock(&fsl_chan->vchan.lock);
+	unsigned long flags;
+	//spin_lock(&fsl_chan->vchan.lock);
+	raw_spin_lock_irqsave(&fsl_chan->vchan.lock, flags);
 
 	if (!fsl_chan->edesc) {
 		/* terminate_all called before */
-		spin_unlock(&fsl_chan->vchan.lock);
+		//spin_unlock(&fsl_chan->vchan.lock);
+		raw_spin_unlock_irqrestore(&fsl_chan->vchan.lock, flags);
 		return;
 	}
 
@@ -92,7 +95,8 @@ void fsl_edma_tx_chan_handler(struct fsl_edma_chan *fsl_chan)
 	if (!fsl_chan->edesc)
 		fsl_edma_xfer_desc(fsl_chan);
 
-	spin_unlock(&fsl_chan->vchan.lock);
+	//spin_unlock(&fsl_chan->vchan.lock);
+	raw_spin_unlock_irqrestore(&fsl_chan->vchan.lock, flags);
 }
 
 static void fsl_edma3_enable_request(struct fsl_edma_chan *fsl_chan)
