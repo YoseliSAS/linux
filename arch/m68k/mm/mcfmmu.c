@@ -168,6 +168,22 @@ void __init cf_bootmem_alloc(void)
 	/* Reserve kernel text/data/bss */
 	memblock_reserve(_rambase, memstart - _rambase);
 
+#ifdef CONFIG_DMA_GLOBAL_POOL
+	/*
+	 * Carve the coherent DMA pool out of the top of RAM, page aligned.
+	 * It is published verbatim to dma_init_global_coherent() and handed
+	 * out by dma_alloc_coherent(), so it must fit in the free RAM above
+	 * the kernel image; otherwise devices would DMA over kernel text/data.
+	 * The subtraction avoids the overflow a base+size check would risk.
+	 */
+	if (_ramend - memstart < CONFIG_DMASIZE)
+		panic("DMA pool (%#lx bytes) does not fit in the %#lx bytes of RAM above the kernel image\n",
+		      (unsigned long)CONFIG_DMASIZE, _ramend - memstart);
+
+	memblock_reserve(round_down(_ramend - CONFIG_DMASIZE, PAGE_SIZE),
+			 CONFIG_DMASIZE);
+#endif
+
 	m68k_virt_to_node_shift = fls(_ramend - 1) - 6;
 	module_fixup(NULL, __start_fixup, __stop_fixup);
 

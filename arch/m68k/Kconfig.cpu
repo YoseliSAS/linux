@@ -304,6 +304,7 @@ config M5441x
 	select COLDFIRE_PIT_TIMER
 	select MMU_COLDFIRE if MMU
 	select HAVE_CACHE_CB
+	select DMA_GLOBAL_POOL
 	help
 	  Freescale Coldfire 54410/54415/54416/54417/54418 processor support.
 

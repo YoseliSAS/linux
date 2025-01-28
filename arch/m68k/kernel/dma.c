@@ -7,6 +7,7 @@
 #include <linux/dma-map-ops.h>
 #include <linux/kernel.h>
 #include <asm/cacheflush.h>
+#include <asm/page.h>
 
 #ifndef CONFIG_COLDFIRE
 void arch_dma_prep_coherent(struct page *page, size_t size)
@@ -43,3 +44,14 @@ void arch_sync_dma_for_device(phys_addr_t handle, size_t size,
 		break;
 	}
 }
+
+#ifdef CONFIG_DMA_GLOBAL_POOL
+static int __init coldfire_dma_init(void)
+{
+	phys_addr_t base = round_down(_ramend - CONFIG_DMASIZE, PAGE_SIZE);
+
+	return dma_init_global_coherent(base, CONFIG_DMASIZE);
+}
+
+core_initcall(coldfire_dma_init);
+#endif
