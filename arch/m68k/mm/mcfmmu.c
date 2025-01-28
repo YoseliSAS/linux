@@ -173,6 +173,11 @@ void __init cf_bootmem_alloc(void)
 	/* Reserve kernel text/data/bss */
 	memblock_reserve(_rambase, memstart - _rambase);
 
+#ifdef CONFIG_DMA_GLOBAL_POOL
+	/* Reserve DMA */
+	memblock_reserve(CONFIG_DMABASE, CONFIG_DMASIZE);
+#endif
+
 	m68k_virt_to_node_shift = fls(_ramend - 1) - 6;
 	module_fixup(NULL, __start_fixup, __stop_fixup);
 
