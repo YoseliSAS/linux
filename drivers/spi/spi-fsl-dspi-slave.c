@@ -1312,6 +1312,24 @@ static int setup(struct driver_data *drv_data)
 	return 0;
 }
 
+static ssize_t reset_stats_write(struct file *file,
+				 const char __user *buf,
+				 size_t count,
+				 loff_t *ppos)
+{
+	struct driver_data *drv_data = file_inode(file)->i_private;
+
+	stat_reset_counters(drv_data);
+
+	pr_info("DSPI: Statistics cleared\n");
+	return count; /* pretend we consumed all data */
+}
+
+static const struct file_operations reset_stats_fops = {
+	.owner = THIS_MODULE,
+	.write = reset_stats_write,
+};
+
 /****************************************************************************/
 
 static const struct file_operations debugfs_sync_s0tos2_fops = {
@@ -1496,17 +1514,30 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	if (!debugfs_create_file("sync_s0tos2", 0600, drv_data->debugfs_direntry, chrdev_drvdata, &debugfs_sync_s0tos2_fops))
 		dev_warn(&pdev->dev, "Unable to create %s entry\n", "sync_s0tos2");
 
-	/* Create a debugfs file to select the mode based on
-	 * enum dspi_trans_mode {
-	 * 	DSPI_POLLING_MODE,
-	 * 	DSPI_DMA_MODE,
-	 * };
-	 * I need to be able to read and write into it
-	 */
-	debugfs_create_u8("mode", 0644, chrdev_drvdata->debugfs_direntry, &chrdev_drvdata->mode);
+	debugfs_create_u64("stat_spi_nbbytes_recv", 0444,
+			   drv_data->debugfs_direntry,
+			   &drv_data->stat_spi_nbbytes_recv);
 
-	struct dentry *test_dir = debugfs_create_dir("test_dir", NULL);
-	debugfs_create_u8("mode", 0644, test_dir, &chrdev_drvdata->mode);
+	debugfs_create_u64("stat_spi_nbbytes_sent", 0444,
+			   drv_data->debugfs_direntry,
+			   &drv_data->stat_spi_nbbytes_sent);
+
+	debugfs_create_u64("stat_rx_hwfifo_overflow", 0444,
+			   drv_data->debugfs_direntry,
+			   &drv_data->stat_rx_hwfifo_overflow);
+
+	debugfs_create_u64("stat_rx_kfifo_overflow", 0444,
+			   drv_data->debugfs_direntry,
+			   &drv_data->stat_rx_kfifo_overflow);
+
+	debugfs_create_u64("stat_tx_hwfifo_underflow", 0444,
+			   drv_data->debugfs_direntry,
+			   &drv_data->stat_tx_hwfifo_underflow);
+
+	debugfs_create_file("reset_stats", 0220,
+			    drv_data->debugfs_direntry,
+			    drv_data, &reset_stats_fops);
+
 	printk(KERN_INFO "DSPI: Coldfire slave initialized (DSPI%d)\n", platform_info->bus_num);
 
 
