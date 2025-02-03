@@ -98,7 +98,9 @@ struct dspi_slave_perf {
 	u64 latency;
 	u64 max_latency;
 	u64 min_latency;
-	u64 frame_number;
+	u64 total_latency;
+	u64 avg_latency;
+	u32 frame_number;
 };
 
 enum dspi_trans_mode {
@@ -180,6 +182,12 @@ struct driver_data {
 
 	wait_queue_head_t			wq_tx;
 };
+
+/* Function prototypes */
+void dspi_slave_dma_rx_callback(void *data);
+void dspi_slave_dma_tx_callback(void *data);
+int dspi_slave_next_xfer_rx_dma(struct driver_data *drv_data);
+int dspi_slave_next_xfer_tx_dma(struct driver_data *drv_data);
 
 /* Define ioctl commands */
 #define SPIRT_IOCTL_GET_FRAME _IOR('M', 1, int)
