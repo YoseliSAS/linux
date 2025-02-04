@@ -178,11 +178,14 @@ static int __init mcf_dma_timer_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	__raw_writeb(0, MCFDMATIMER_IRQ_PRIO0);
+	__raw_writeb(0, MCFDMATIMER_IRQ_PRIO1);
+	__raw_writeb(0, MCFDMATIMER_IRQ_PRIO2);
+	__raw_writeb(0, MCFDMATIMER_IRQ_PRIO3);
 	prio_reg = platform_get_resource_byname(pdev, IORESOURCE_REG, "prio_reg");
 	if (prio_reg) {
 		/* Enhance the interrupt priority (0 == disabled) */
-		__raw_writeb(4, prio_reg->start);
-		dev_info(&pdev->dev, "Enhance priority to 4\n");
+		__raw_writeb(5, prio_reg->start);
 	}
 
 	priv->clk = devm_clk_get_enabled(&pdev->dev, NULL);
