@@ -132,11 +132,11 @@ static unsigned int intc_irq_startup(struct irq_data *d)
 
 	irq -= MCFINT_VECBASE;
 	if (MCFINTC2_ICR0 && (irq > 127))
-		__raw_writeb(5, MCFINTC2_ICR0 + irq - 128);
+		__raw_writeb(3, MCFINTC2_ICR0 + irq - 128);
 	else if (MCFINTC1_ICR0 && (irq > 63))
-		__raw_writeb(5, MCFINTC1_ICR0 + irq - 64);
+		__raw_writeb(3, MCFINTC1_ICR0 + irq - 64);
 	else
-		__raw_writeb(5, MCFINTC0_ICR0 + irq);
+		__raw_writeb(3, MCFINTC0_ICR0 + irq);
 
 	intc_irq_unmask(d);
 	return 0;
