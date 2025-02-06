@@ -306,6 +306,9 @@ static int dspi_slave_dma_setup_channel(struct driver_data *drv_data)
 	drv_data->rx_priority = 15;
 	drv_data->chan_rx->private = &drv_data->rx_priority;
 
+	/* Set the RX DMA channel to a high prio */
+	__raw_writeb(6, MCFEDMA_IRQ_PRIO0 + drv_data->chan_rx->chan_id);
+
 	/* Prepare for TX : */
 	chan = dma_request_chan(&drv_data->pdev->dev, "tx");
 	if (IS_ERR(chan)) {
@@ -1191,9 +1194,6 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Unable to attach ColdFire DSPI interrupt\n");
 		goto out_error_after_drv_data_alloc;
 	}
-
-	/* Enhance the interrupt priority */
-	__raw_writeb(6, MCFINTC1_ICR0 + MCFINT1_DSPI1);
 
 	local_lock_init(&drv_data->lock);
 
