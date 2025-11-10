@@ -31,6 +31,7 @@
 #include <linux/circ_buf.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
+#include <linux/hrtimer.h>
 
 /****************************************************************************/
 
@@ -1027,8 +1028,7 @@ static int mcf_probe(struct platform_device *pdev)
 	pp->dma_chan_tx = NULL;
 
 	mcf_uart_dma_chan_setup(port);
-	hrtimer_init(&pp->rx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	pp->rx_timer.function = mcf_rx_thread;
+	hrtimer_setup(&pp->rx_timer, mcf_rx_thread, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 
 	uart_add_one_port(&mcf_driver, port);
 
