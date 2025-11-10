@@ -723,11 +723,11 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 
 #if defined(CONFIG_COLDFIRE) && defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	dma->tx_dma_buf = dma_alloc_coherent(dma->chan_tx->device->dev,
-					     dma_bufsize, &dma->tx_dma_phys,
+					     dma->bufsize, &dma->tx_dma_phys,
 					     GFP_KERNEL);
 #else
 	dma->tx_dma_buf = dma_alloc_noncoherent(dma->chan_tx->device->dev,
-						dma_bufsize, &dma->tx_dma_phys,
+						dma->bufsize, &dma->tx_dma_phys,
 						DMA_BIDIRECTIONAL, GFP_KERNEL);
 
 #endif
@@ -738,11 +738,11 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 
 #if defined(CONFIG_COLDFIRE) && defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	dma->rx_dma_buf = dma_alloc_coherent(dma->chan_rx->device->dev,
-					     dma_bufsize, &dma->rx_dma_phys,
+					     dma->bufsize, &dma->rx_dma_phys,
 					     GFP_KERNEL);
 #else
 	dma->rx_dma_buf = dma_alloc_noncoherent(dma->chan_rx->device->dev,
-						dma_bufsize, &dma->rx_dma_phys,
+						dma->bufsize, &dma->rx_dma_phys,
 						DMA_BIDIRECTIONAL, GFP_KERNEL);
 #endif
 	if (!dma->rx_dma_buf) {
@@ -781,19 +781,19 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 err_slave_config:
 #if defined(CONFIG_COLDFIRE) && defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	dma_free_coherent(dma->chan_rx->device->dev,
-			  dma_bufsize, dma->rx_dma_buf, dma->rx_dma_phys);
+			  dma->bufsize, dma->rx_dma_buf, dma->rx_dma_phys);
 #else
 	dma_free_noncoherent(dma->chan_rx->device->dev,
-			     dma_bufsize, dma->rx_dma_buf, dma->rx_dma_phys,
+			     dma->bufsize, dma->rx_dma_buf, dma->rx_dma_phys,
 			     DMA_BIDIRECTIONAL);
 #endif
 err_rx_dma_buf:
 #if defined(CONFIG_COLDFIRE) && defined(CONFIG_COLDFIRE_COHERENT_DMA)
 	dma_free_coherent(dma->chan_tx->device->dev,
-			  dma_bufsize, dma->tx_dma_buf, dma->tx_dma_phys);
+			  dma->bufsize, dma->tx_dma_buf, dma->tx_dma_phys);
 #else
 	dma_free_noncoherent(dma->chan_tx->device->dev,
-			     dma_bufsize, dma->tx_dma_buf, dma->tx_dma_phys,
+			     dma->bufsize, dma->tx_dma_buf, dma->tx_dma_phys,
 			     DMA_BIDIRECTIONAL);
 #endif
 err_tx_dma_buf:
