@@ -287,6 +287,7 @@ static void eth_switch_enabled_work_fec1(struct work_struct *work);
     defined(CONFIG_M520x) || defined(CONFIG_M532x) || defined(CONFIG_ARM) || \
     defined(CONFIG_ARM64) || defined(CONFIG_M5441x)
 #define	OPT_FRAME_SIZE	(PKT_MAXBUF_SIZE << 16)
+#define	OPT_ARCH_HAS_MAX_FL	1
 #else
 #define	OPT_ARCH_HAS_MAX_FL	0
 #endif
@@ -2850,8 +2851,8 @@ static void fec_enet_get_regs(struct net_device *ndev,
 	u32 i, off;
 	int ret;
 #if defined(CONFIG_M523x) || defined(CONFIG_M527x) || defined(CONFIG_M528x) || \
-	defined(CONFIG_M520x) || defined(CONFIG_M532x) || defined(CONFIG_ARM) || \
-	defined(CONFIG_ARM64) || defined(CONFIG_COMPILE_TEST)
+	defined(CONFIG_M520x) || defined(CONFIG_M532x) || defined(CONFIG_M5441x) || \
+	defined(CONFIG_ARM) || defined(CONFIG_ARM64) || defined(CONFIG_COMPILE_TEST)
 	u32 *reg_list;
 	u32 reg_cnt;
 
