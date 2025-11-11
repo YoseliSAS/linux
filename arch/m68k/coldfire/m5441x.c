@@ -21,14 +21,14 @@
 DEFINE_CLK(0, "flexbus", 2, MCF_CLK);
 DEFINE_CLK(0, "flexcan.0", 8, MCF_CLK);
 DEFINE_CLK(0, "flexcan.1", 9, MCF_CLK);
-DEFINE_CLK(0, "imx1-i2c.1", 14, MCF_CLK);
-DEFINE_CLK(0, "mcfdspi.1", 15, MCF_CLK);
+DEFINE_CLK(0, "imx1-i2c.1", 14, MCF_BUSCLK);
+DEFINE_CLK(0, "mcfdspi.1", 15, MCF_BUSCLK);
 DEFINE_CLK(0, "edma", 17, MCF_CLK);
 DEFINE_CLK(0, "intc.0", 18, MCF_CLK);
 DEFINE_CLK(0, "intc.1", 19, MCF_CLK);
 DEFINE_CLK(0, "intc.2", 20, MCF_CLK);
-DEFINE_CLK(0, "imx1-i2c.0", 22, MCF_CLK);
-DEFINE_CLK(0, "fsl-dspi.0", 23, MCF_CLK);
+DEFINE_CLK(0, "imx1-i2c.0", 22, MCF_BUSCLK);
+DEFINE_CLK(0, "fsl-dspi.0", 23, MCF_BUSCLK);
 DEFINE_CLK(0, "mcfuart.0", 24, MCF_BUSCLK);
 DEFINE_CLK(0, "mcfuart.1", 25, MCF_BUSCLK);
 DEFINE_CLK(0, "mcfuart.2", 26, MCF_BUSCLK);
@@ -41,9 +41,10 @@ DEFINE_CLK(0, "mcfpit.0", 32, MCF_BUSCLK);
 DEFINE_CLK(0, "mcfpit.1", 33, MCF_BUSCLK);
 DEFINE_CLK(0, "mcfpit.2", 34, MCF_BUSCLK);
 DEFINE_CLK(0, "mcfpit.3", 35, MCF_BUSCLK);
-DEFINE_CLK(0, "mcfeport.0", 37, MCF_CLK);
-DEFINE_CLK(0, "mcfadc.0", 38, MCF_CLK);
-DEFINE_CLK(0, "mcfdac.0", 39, MCF_CLK);
+DEFINE_CLK(0, "mcfeport.0", 36, MCF_CLK);
+DEFINE_CLK(0, "mcfadc.0", 37, MCF_BUSCLK);
+DEFINE_CLK(0, "mcfdac.0", 38, MCF_BUSCLK);
+DEFINE_CLK(0, "mcfdac.1", 39, MCF_BUSCLK);
 DEFINE_CLK(0, "mcfrtc.0", 42, MCF_CLK);
 DEFINE_CLK(0, "mcfsim.0", 43, MCF_CLK);
 DEFINE_CLK(0, "mcfusb-otg.0", 44, MCF_CLK);
@@ -61,10 +62,10 @@ DEFINE_CLK(0, "switch.1", 56, MCF_CLK);
 DEFINE_CLK(0, "nand.0", 63, MCF_CLK);
 
 DEFINE_CLK(1, "mcfow.0", 2, MCF_CLK);
-DEFINE_CLK(1, "imx1-i2c.2", 4, MCF_CLK);
-DEFINE_CLK(1, "imx1-i2c.3", 5, MCF_CLK);
-DEFINE_CLK(1, "imx1-i2c.4", 6, MCF_CLK);
-DEFINE_CLK(1, "imx1-i2c.5", 7, MCF_CLK);
+DEFINE_CLK(1, "imx1-i2c.2", 4, MCF_BUSCLK);
+DEFINE_CLK(1, "imx1-i2c.3", 5, MCF_BUSCLK);
+DEFINE_CLK(1, "imx1-i2c.4", 6, MCF_BUSCLK);
+DEFINE_CLK(1, "imx1-i2c.5", 7, MCF_BUSCLK);
 DEFINE_CLK(1, "mcfuart.4", 24, MCF_BUSCLK);
 DEFINE_CLK(1, "mcfuart.5", 25, MCF_BUSCLK);
 DEFINE_CLK(1, "mcfuart.6", 26, MCF_BUSCLK);
@@ -103,9 +104,10 @@ static struct clk_lookup m5411x_clk_lookup[] = {
 	CLKDEV_INIT("mcfpit.1", NULL, &__clk_0_33),
 	CLKDEV_INIT("mcfpit.2", NULL, &__clk_0_34),
 	CLKDEV_INIT("mcfpit.3", NULL, &__clk_0_35),
-	CLKDEV_INIT("mcfeport.0", NULL, &__clk_0_37),
-	CLKDEV_INIT("mcfadc.0", NULL, &__clk_0_38),
-	CLKDEV_INIT("mcfdac.0", NULL, &__clk_0_39),
+	CLKDEV_INIT("mcfeport.0", NULL, &__clk_0_36),
+	CLKDEV_INIT("mcfadc.0", NULL, &__clk_0_37),
+	CLKDEV_INIT("mcfdac.0", NULL, &__clk_0_38),
+	CLKDEV_INIT("mcfdac.1", NULL, &__clk_0_39),
 	CLKDEV_INIT("mcfrtc.0", NULL, &__clk_0_42),
 	CLKDEV_INIT("mcfsim.0", NULL, &__clk_0_43),
 	CLKDEV_INIT("mcfusb-otg.0", NULL, &__clk_0_44),
@@ -156,7 +158,7 @@ static struct clk * const enable_clks[] __initconst = {
 	&__clk_0_28, /* tmr.0 */
 
 	&__clk_0_33, /* pit.1 */
-	&__clk_0_37, /* eport */
+	&__clk_0_36, /* eport */
 	&__clk_0_48, /* pll */
 	&__clk_0_51, /* esdhc */
 	&__clk_0_53, /* enet-fec */
@@ -182,8 +184,9 @@ static struct clk * const disable_clks[] __initconst = {
 	&__clk_0_32, /* pit.0 */
 	&__clk_0_34, /* pit.2 */
 	&__clk_0_35, /* pit.3 */
-	&__clk_0_38, /* adc */
-	&__clk_0_39, /* dac */
+	&__clk_0_37, /* adc */
+	&__clk_0_38, /* dac0 */
+	&__clk_0_39, /* dac1 */
 	&__clk_0_44, /* usb otg */
 	&__clk_0_45, /* usb host */
 	&__clk_0_47, /* ssi.0 */
