@@ -1797,24 +1797,6 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	if (ret == -EPROBE_DEFER)
 		goto clk_notifier_unregister;
 
-	/*
-	 * DMA mode should be optional for I2C, when encountering DMA errors,
-	 * no need to exit I2C probe. Only print warning to show DMA error and
-	 * use PIO mode directly to ensure I2C bus available as much as possible.
-	 */
-	ret = i2c_imx_dma_request(i2c_imx, phy_addr);
-	if (ret) {
-		if (ret == -EPROBE_DEFER) {
-			dev_err_probe(&pdev->dev, ret, "can't get DMA channels\n");
-			goto clk_notifier_unregister;
-		} else if (ret == -ENODEV) {
-			dev_dbg(&pdev->dev, "Only use PIO mode\n");
-		} else {
-			dev_warn(&pdev->dev, "Failed to setup DMA (%pe), only use PIO mode\n",
-				 ERR_PTR(ret));
-		}
-	}
-
 	/* Add I2C adapter */
 	ret = i2c_add_numbered_adapter(&i2c_imx->adapter);
 	if (ret < 0)
