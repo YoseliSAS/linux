@@ -92,6 +92,13 @@ static int mcf_edma_irq_init(struct platform_device *pdev,
 	if (ret)
 		return ret;
 
+	res = platform_get_resource_byname(pdev, IORESOURCE_REG, "prio-reg-00-15");
+	if (!res)
+		return -1;
+	for (ret = 0, i = res->start; i <= res->end; ++i) {
+		__raw_writeb(4, i);
+	}
+
 	res = platform_get_resource_byname(pdev,
 			IORESOURCE_IRQ, "edma-tx-16-55");
 	if (!res)
@@ -105,12 +112,26 @@ static int mcf_edma_irq_init(struct platform_device *pdev,
 	if (ret)
 		return ret;
 
+	res = platform_get_resource_byname(pdev, IORESOURCE_REG, "prio-reg-16-55");
+	if (!res)
+		return -1;
+	for (ret = 0, i = res->start; i <= res->end; ++i) {
+		__raw_writeb(4, i);
+	}
+
 	ret = platform_get_irq_byname(pdev, "edma-tx-56-63");
 	if (ret != -ENXIO) {
 		ret = request_irq(ret, mcf_edma_tx_handler,
 				  0, "eDMA-tx-56", mcf_edma);
 		if (ret)
 			return ret;
+	}
+
+	res = platform_get_resource_byname(pdev, IORESOURCE_REG, "prio-reg-56-63");
+	if (res) {
+		for (ret = 0, i = res->start; i <= res->end; ++i) {
+			__raw_writeb(4, i);
+		}
 	}
 
 	ret = platform_get_irq_byname(pdev, "edma-err");
