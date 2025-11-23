@@ -306,6 +306,65 @@ static struct platform_device mcf_s2tos0 = {
        .resource = mcf_s2tos0_resource,
 };
 
+/* DAC Audio Support */
+static struct resource mcf54418_dac_resources[] = {
+	[0] = {
+		.start = 0xFC098000,  /* DAC0 */
+		.end   = 0xFC098FFF,
+		.flags = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start = 0xFC09C000,  /* DAC1 */
+		.end   = 0xFC09CFFF,
+		.flags = IORESOURCE_MEM,
+	},
+	[2] = {
+		.start = 0xFC07C000,  /* DTIM3 */
+		.end   = 0xFC07C00F,
+		.flags = IORESOURCE_MEM,
+	},
+	[3] = {
+		.start = 0xEC090000,  /* CCM */
+		.end   = 0xEC0900FF,
+		.flags = IORESOURCE_MEM,
+	},
+	[4] = {
+		.start = 62,  /* DMA channel for DAC0 */
+		.end   = 62,
+		.flags = IORESOURCE_DMA,
+		.name  = "tx0",
+	},
+	[5] = {
+		.start = 63,  /* DMA channel for DAC1 */
+		.end   = 63,
+		.flags = IORESOURCE_DMA,
+		.name  = "tx1",
+	},
+};
+
+static u64 mcf54418_dac_dmamask = DMA_BIT_MASK(32);
+
+static struct platform_device mcf54418_dac_device = {
+	.name = "mcfdac",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(mcf54418_dac_resources),
+	.resource = mcf54418_dac_resources,
+	.dev = {
+		.dma_mask = &mcf54418_dac_dmamask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
+};
+
+static struct platform_device mcf54418_dac_codec_device = {
+	.name = "mcf54418-dac-codec",
+	.id = -1,
+};
+
+static struct platform_device mcf54418_dac_audio_device = {
+	.name = "mcf54418-dac-audio",
+	.id = -1,
+};
+
 static struct platform_device *dlc_next_devices[] __initdata = {
 	&mcf_uart2,
 	&mcf_uart6,
@@ -314,6 +373,9 @@ static struct platform_device *dlc_next_devices[] __initdata = {
 	&dspi_spi0_device,
 	&dspi_spi1_device,
 	&mcf_s2tos0,
+	&mcf54418_dac_device,
+	&mcf54418_dac_codec_device,
+	&mcf54418_dac_audio_device,
 };
 
 #define MCFGPIO_PAR_DSPIO_SCK_MASK		(0xF3)
