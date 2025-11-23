@@ -376,4 +376,15 @@ config SND_SOC_IMX_CARD
 
 endif # SND_IMX_SOC
 
+config SND_SOC_FSL_MCF54418_DAC
+	tristate "MCF54418 DAC Audio Support"
+	depends on M68K || COMPILE_TEST
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	help
+	  Say Y if you want to add support for the internal DAC on
+	  Freescale/NXP MCF54418 ColdFire processors.
+
+	  This driver provides ALSA/ASoC support for audio playback
+	  through the built-in 12-bit dual DACs with DMA support.
+
 endmenu

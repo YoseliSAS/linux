@@ -79,3 +79,11 @@ obj-$(CONFIG_SND_SOC_IMX_AUDMIX) += snd-soc-imx-audmix.o
 obj-$(CONFIG_SND_SOC_IMX_HDMI) += snd-soc-imx-hdmi.o
 obj-$(CONFIG_SND_SOC_IMX_RPMSG) += snd-soc-imx-rpmsg.o
 obj-$(CONFIG_SND_SOC_IMX_CARD) += snd-soc-imx-card.o
+
+# MCF54418 ColdFire Support
+snd-soc-fsl-mcf54418-dac-y := fsl-mcf54418-dac.o
+snd-soc-mcf54418-dac-codec-y := mcf54418-dac-codec.o
+snd-soc-mcf54418-dac-audio-y := mcf54418-dac-audio.o
+obj-$(CONFIG_SND_SOC_FSL_MCF54418_DAC) += snd-soc-fsl-mcf54418-dac.o
+obj-$(CONFIG_SND_SOC_FSL_MCF54418_DAC) += snd-soc-mcf54418-dac-codec.o
+obj-$(CONFIG_SND_SOC_FSL_MCF54418_DAC) += snd-soc-mcf54418-dac-audio.o
