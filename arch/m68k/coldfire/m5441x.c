@@ -140,6 +140,7 @@ static struct clk_lookup m5411x_clk_lookup[] = {
 	CLKDEV_INIT("ipg.0", NULL, &__clk_2_0),
 	CLKDEV_INIT("ahb.0", NULL, &__clk_2_1),
 	CLKDEV_INIT("per.0", NULL, &__clk_2_2),
+	CLKDEV_INIT("fsl-mcf54418-dac", "bus", &__clk_0_39),
 };
 
 static struct clk * const enable_clks[] __initconst = {
@@ -156,9 +157,12 @@ static struct clk * const enable_clks[] __initconst = {
 	&__clk_0_26, /* uart2 */
 	&__clk_1_26, /* uart6 */
 	&__clk_0_28, /* tmr.0 */
+	&__clk_0_31, /* tmr.3 */
 
 	&__clk_0_33, /* pit.1 */
 	&__clk_0_36, /* eport */
+	&__clk_0_38, /* dac0 */
+	&__clk_0_39, /* dac1 */
 	&__clk_0_48, /* pll */
 	&__clk_0_49, /* rng */
 	&__clk_0_51, /* esdhc */
@@ -181,13 +185,10 @@ static struct clk * const disable_clks[] __initconst = {
 	&__clk_0_27, /* uart3 */
 	&__clk_0_29, /* tmr.1 */
 	&__clk_0_30, /* tmr.2 */
-	&__clk_0_31, /* tmr.3 */
 	&__clk_0_32, /* pit.0 */
 	&__clk_0_34, /* pit.2 */
 	&__clk_0_35, /* pit.3 */
 	&__clk_0_37, /* adc */
-	&__clk_0_38, /* dac0 */
-	&__clk_0_39, /* dac1 */
 	&__clk_0_44, /* usb otg */
 	&__clk_0_45, /* usb host */
 	&__clk_0_47, /* ssi.0 */
