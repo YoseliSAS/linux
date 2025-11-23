@@ -2497,6 +2497,18 @@ config TEST_BITMAP
 
 	  If unsure, say N.
 
+config TEST_BIT_ULL
+	tristate "Test BIT() vs BIT_ULL() behavior on 32-bit architectures"
+	help
+	  Enable this option to verify that BIT_ULL() correctly handles
+	  bit positions >= 32 on 32-bit architectures, where BIT() would
+	  cause undefined behavior due to shift >= width of unsigned long.
+
+	  This test validates fixes like commit 3626aecaa236 which corrected
+	  eDMA interrupt handling for channels > 31 on MCF54418 (M68K).
+
+	  If unsure, say N.
+
 config TEST_UUID
 	tristate "Test functions located in the uuid module at runtime"
 
