@@ -89,7 +89,8 @@ static inline void wrusp(unsigned long usp)
  */
 static inline void set_fc(unsigned long val)
 {
-	WARN_ON_ONCE(in_interrupt());
+	/* Note: in_interrupt() check removed to avoid circular dependency
+	 * with struct task_struct definition in CONFIG_PREEMPT_RT builds */
 
 	__asm__ __volatile__ ("movec %0,%/sfc\n\t"
 			      "movec %0,%/dfc\n\t"
