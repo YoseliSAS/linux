@@ -501,6 +501,24 @@ static struct resource mcf_edma_resources[] = {
 		.flags		= IORESOURCE_IRQ,
 		.name		= "edma-err",
 	},
+	{
+		.start = MCFEDMA_IRQ_PRIO0,
+		.end   = MCFEDMA_IRQ_PRIO0 + 15,
+		.flags = IORESOURCE_REG,
+		.name = "prio-reg-00-15",
+	},
+	{
+		.start = MCFEDMA_IRQ_PRIO16,
+		.end   = MCFEDMA_IRQ_PRIO16 + 39,
+		.flags = IORESOURCE_REG,
+		.name = "prio-reg-16-55",
+	},
+	{
+		.start = MCFEDMA_IRQ_PRIO56,
+		.end   = MCFEDMA_IRQ_PRIO56 + 7,
+		.flags = IORESOURCE_REG,
+		.name = "prio-reg-56-63",
+	},
 };
 
 static u64 mcf_edma_dmamask = DMA_BIT_MASK(32);
