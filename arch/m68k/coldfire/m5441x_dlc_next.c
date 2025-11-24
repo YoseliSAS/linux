@@ -20,6 +20,17 @@
 #define	MCFGPIO_PAR_FBCTL_TA_MASK	0xFC
 #define MCFGPIO_PAR_FBCTL_TA_NFC_RB	0x01
 
+/* CAN/I2C Pin Assignment Register */
+#define MCFGPIO_PAR_CANI2C		0xEC09404B
+#define MCFGPIO_PAR_CANI2C_I2C0SCL_MASK	0x3F
+#define MCFGPIO_PAR_CANI2C_I2C0SCL_CAN0TX	0x40
+#define MCFGPIO_PAR_CANI2C_I2C0SDA_MASK	0xCF
+#define MCFGPIO_PAR_CANI2C_I2C0SDA_CAN0RX	0x10
+#define MCFGPIO_PAR_CANI2C_CAN1TX_MASK	0xF3
+#define MCFGPIO_PAR_CANI2C_CAN1TX_CAN1TX	0x0C
+#define MCFGPIO_PAR_CANI2C_CAN1RX_MASK	0xFC
+#define MCFGPIO_PAR_CANI2C_CAN1RX_CAN1RX	0x03
+
 #define MCFGPIO_SRCR_IRQ0		0xec09406a
 #define MCFGPIO_SRCR_SDHC		0xec09406e
 
@@ -437,6 +448,29 @@ static int __init init_m5441x_dlc_next(void)
 	__raw_writeb(0x05, MCFGPIO_PAR_SDHCL);
 	__raw_writeb(3, MCFGPIO_SRCR_IRQ0);
 	__raw_writeb(3, MCFGPIO_SRCR_SDHC);
+
+	/* Configure FlexCAN pins */
+	/* CAN0: uses I2C0_SCL/SDA pins */
+	u8 cani2c = __raw_readb(MCFGPIO_PAR_CANI2C);
+	cani2c = (cani2c & MCFGPIO_PAR_CANI2C_I2C0SCL_MASK) |
+		 MCFGPIO_PAR_CANI2C_I2C0SCL_CAN0TX;
+	__raw_writeb(cani2c, MCFGPIO_PAR_CANI2C);
+
+	cani2c = __raw_readb(MCFGPIO_PAR_CANI2C);
+	cani2c = (cani2c & MCFGPIO_PAR_CANI2C_I2C0SDA_MASK) |
+		 MCFGPIO_PAR_CANI2C_I2C0SDA_CAN0RX;
+	__raw_writeb(cani2c, MCFGPIO_PAR_CANI2C);
+
+	/* CAN1: uses dedicated CAN1 pins */
+	cani2c = __raw_readb(MCFGPIO_PAR_CANI2C);
+	cani2c = (cani2c & MCFGPIO_PAR_CANI2C_CAN1TX_MASK) |
+		 MCFGPIO_PAR_CANI2C_CAN1TX_CAN1TX;
+	__raw_writeb(cani2c, MCFGPIO_PAR_CANI2C);
+
+	cani2c = __raw_readb(MCFGPIO_PAR_CANI2C);
+	cani2c = (cani2c & MCFGPIO_PAR_CANI2C_CAN1RX_MASK) |
+		 MCFGPIO_PAR_CANI2C_CAN1RX_CAN1RX;
+	__raw_writeb(cani2c, MCFGPIO_PAR_CANI2C);
 
 	/* Board gpio setup */
 	platform_add_devices(dlc_next_devices, ARRAY_SIZE(dlc_next_devices));
