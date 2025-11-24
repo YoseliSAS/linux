@@ -2109,10 +2109,19 @@ static int flexcan_probe(struct platform_device *pdev)
 	else if (IS_ERR(reg_xceiver))
 		return PTR_ERR(reg_xceiver);
 
-	transceiver = devm_phy_optional_get(&pdev->dev, NULL);
-	if (IS_ERR(transceiver))
-		return dev_err_probe(&pdev->dev, PTR_ERR(transceiver),
-				     "failed to get phy\n");
+	/*
+	 * The PHY subsystem doesn't support non-DT platforms with a NULL
+	 * phy name string - it triggers a warning and returns -EINVAL.
+	 * Only attempt PHY lookup for DT-based platforms.
+	 */
+	if (pdev->dev.of_node) {
+		transceiver = devm_phy_optional_get(&pdev->dev, NULL);
+		if (IS_ERR(transceiver))
+			return dev_err_probe(&pdev->dev, PTR_ERR(transceiver),
+					     "failed to get phy\n");
+	} else {
+		transceiver = NULL;
+	}
 
 	if (pdev->dev.of_node) {
 		of_property_read_u32(pdev->dev.of_node,
