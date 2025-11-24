@@ -38,6 +38,7 @@
 #include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/signal.h>
+#include <linux/timer.h>
 #include <linux/wait.h>
 
 #include <asm/irq.h>
@@ -64,7 +65,7 @@
 #define FEC_ENET_EBERR	((uint)0x00400000)	/* SDMA bus error */
 
 static int switch_enet_open(struct net_device *dev);
-static int switch_enet_start_xmit(struct sk_buff *skb, struct net_device *dev);
+static netdev_tx_t switch_enet_start_xmit(struct sk_buff *skb, struct net_device *dev);
 static irqreturn_t switch_enet_interrupt(int irq, void *dev_id);
 static void switch_enet_tx(struct net_device *dev);
 static void switch_enet_rx(struct net_device *dev);
@@ -1889,7 +1890,7 @@ static int esw_get_mac_address_lookup_table(struct switch_enet_private *fep,
 /* The timer should create an interrupt every 4 seconds*/
 static void l2switch_aging_timer(struct timer_list *t)
 {
-	struct switch_enet_private *fep = from_timer(fep, t, timer_aging);
+	struct switch_enet_private *fep = timer_container_of(fep, t, timer_aging);
 
 	if (fep) {
 		TIMEINCREMENT(fep->currTime);
