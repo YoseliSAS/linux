@@ -502,6 +502,9 @@ struct dma_async_tx_descriptor *fsl_edma_prep_slave_sg(
 struct dma_async_tx_descriptor *fsl_edma_prep_memcpy(
 		struct dma_chan *chan, dma_addr_t dma_dst, dma_addr_t dma_src,
 		size_t len, unsigned long flags);
+struct dma_async_tx_descriptor *fsl_edma_prep_interleaved_dma(
+		struct dma_chan *chan, struct dma_interleaved_template *xt,
+		unsigned long flags);
 void fsl_edma_xfer_desc(struct fsl_edma_chan *fsl_chan);
 void fsl_edma_issue_pending(struct dma_chan *chan);
 int fsl_edma_alloc_chan_resources(struct dma_chan *chan);

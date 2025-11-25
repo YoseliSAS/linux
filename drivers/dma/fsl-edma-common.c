@@ -792,6 +792,97 @@ struct dma_async_tx_descriptor *fsl_edma_prep_memcpy(struct dma_chan *chan,
 	return vchan_tx_prep(&fsl_chan->vchan, &fsl_desc->vdesc, flags);
 }
 
+struct dma_async_tx_descriptor *fsl_edma_prep_interleaved_dma(
+		struct dma_chan *chan, struct dma_interleaved_template *xt,
+		unsigned long flags)
+{
+	struct fsl_edma_chan *fsl_chan = to_fsl_edma_chan(chan);
+	struct fsl_edma_desc *fsl_desc;
+	dma_addr_t src_addr, dst_addr;
+	size_t src_icg, dst_icg;
+	u16 soff, doff, attr;
+	u32 nbytes;
+	u16 iter;
+
+	if (!xt || xt->numf == 0 || xt->frame_size != 1)
+		return NULL;
+
+	/* Only support single chunk per frame for now */
+	if (xt->sgl[0].size == 0)
+		return NULL;
+
+	/*
+	 * For MEM_TO_MEM transfers, calculate offsets based on source/dest
+	 * scatter-gather flags. For slave transfers, follow the existing pattern.
+	 */
+	src_addr = xt->src_start;
+	dst_addr = xt->dst_start;
+	nbytes = xt->sgl[0].size;
+
+	/* Get inter-chunk gaps */
+	src_icg = dmaengine_get_src_icg(xt, &xt->sgl[0]);
+	dst_icg = dmaengine_get_dst_icg(xt, &xt->sgl[0]);
+
+	/* Calculate source offset */
+	if (xt->src_inc) {
+		if (xt->src_sgl)
+			soff = nbytes + src_icg;  /* Scattered: skip gap */
+		else
+			soff = nbytes;            /* Contiguous */
+	} else {
+		soff = 0;                         /* Fixed address */
+	}
+
+	/* Calculate destination offset */
+	if (xt->dst_inc) {
+		if (xt->dst_sgl)
+			doff = nbytes + dst_icg;  /* Scattered: skip gap */
+		else
+			doff = nbytes;            /* Contiguous */
+	} else {
+		doff = 0;                         /* Fixed address */
+	}
+
+	/* Determine transfer width based on chunk size */
+	if (nbytes % 32 == 0)
+		attr = fsl_edma_get_tcd_attr(DMA_SLAVE_BUSWIDTH_32_BYTES);
+	else if (nbytes % 16 == 0)
+		attr = fsl_edma_get_tcd_attr(DMA_SLAVE_BUSWIDTH_16_BYTES);
+	else if (nbytes % 8 == 0)
+		attr = fsl_edma_get_tcd_attr(DMA_SLAVE_BUSWIDTH_8_BYTES);
+	else if (nbytes % 4 == 0)
+		attr = fsl_edma_get_tcd_attr(DMA_SLAVE_BUSWIDTH_4_BYTES);
+	else if (nbytes % 2 == 0)
+		attr = fsl_edma_get_tcd_attr(DMA_SLAVE_BUSWIDTH_2_BYTES);
+	else
+		attr = fsl_edma_get_tcd_attr(DMA_SLAVE_BUSWIDTH_1_BYTE);
+
+	iter = xt->numf;
+
+	fsl_desc = fsl_edma_alloc_desc(fsl_chan, 1);
+	if (!fsl_desc)
+		return NULL;
+
+	fsl_desc->iscyclic = false;
+	fsl_desc->dirn = xt->dir;
+
+	fsl_chan->is_sw = (xt->dir == DMA_MEM_TO_MEM);
+
+	/*
+	 * Fill TCD:
+	 * - slast = 0 (no adjustment after major loop)
+	 * - dlast_sga = 0 (no scatter-gather)
+	 * - major_int = true (interrupt on completion)
+	 * - disable_req = true (disable channel on completion)
+	 * - enable_sg = false (no scatter-gather)
+	 */
+	fsl_edma_fill_tcd(fsl_chan, fsl_desc->tcd[0].vtcd, src_addr, dst_addr,
+			  attr, soff, nbytes, 0, iter, iter, doff, 0,
+			  true, true, false);
+
+	return vchan_tx_prep(&fsl_chan->vchan, &fsl_desc->vdesc, flags);
+}
+
 void fsl_edma_xfer_desc(struct fsl_edma_chan *fsl_chan)
 {
 	struct virt_dma_desc *vdesc;
