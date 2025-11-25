@@ -54,6 +54,7 @@
 #define DP83822_DIG_RESTART	BIT(14)
 
 /* PHY STS bits */
+#define DP83822_PHYSTS_MDIX			BIT(14)
 #define DP83822_PHYSTS_DUPLEX			BIT(2)
 #define DP83822_PHYSTS_10			BIT(1)
 #define DP83822_PHYSTS_LINK			BIT(0)
@@ -472,7 +473,50 @@ static int dp83822_read_status(struct phy_device *phydev)
 	else
 		phydev->speed = SPEED_100;
 
+	/* Read resolved MDI/MDIX status */
+	if (status & DP83822_PHYSTS_MDIX)
+		phydev->mdix = ETH_TP_MDI_X;
+	else
+		phydev->mdix = ETH_TP_MDI;
+
 	return 0;
+}
+
+static int dp83822_config_mdix(struct phy_device *phydev)
+{
+	switch (phydev->mdix_ctrl) {
+	case ETH_TP_MDI_AUTO:
+		/* Enable Auto-MDIX */
+		return phy_modify(phydev, MII_DP83822_PHYSCR,
+				  DP83822_PHYSCR_FORCE_MDIX |
+				  DP83822_PHYSCR_MDIX_EN,
+				  DP83822_PHYSCR_MDIX_EN);
+	case ETH_TP_MDI:
+		/* Force MDI (straight) - disable auto and force bits */
+		return phy_modify(phydev, MII_DP83822_PHYSCR,
+				  DP83822_PHYSCR_FORCE_MDIX |
+				  DP83822_PHYSCR_MDIX_EN,
+				  0);
+	case ETH_TP_MDI_X:
+		/* Force MDIX (crossover) - disable auto, set force */
+		return phy_modify(phydev, MII_DP83822_PHYSCR,
+				  DP83822_PHYSCR_FORCE_MDIX |
+				  DP83822_PHYSCR_MDIX_EN,
+				  DP83822_PHYSCR_FORCE_MDIX);
+	default:
+		return 0;
+	}
+}
+
+static int dp83822_config_aneg(struct phy_device *phydev)
+{
+	int ret;
+
+	ret = dp83822_config_mdix(phydev);
+	if (ret)
+		return ret;
+
+	return genphy_config_aneg(phydev);
 }
 
 static int dp83822_config_init_leds(struct phy_device *phydev)
@@ -1257,6 +1301,7 @@ static int dp83822_led_hw_control_get(struct phy_device *phydev, u8 index,
 		.probe          = dp83822_probe,		\
 		.soft_reset	= dp83822_phy_reset,		\
 		.config_init	= dp83822_config_init,		\
+		.config_aneg	= dp83822_config_aneg,		\
 		.read_status	= dp83822_read_status,		\
 		.get_wol = dp83822_get_wol,			\
 		.set_wol = dp83822_set_wol,			\
@@ -1277,6 +1322,8 @@ static int dp83822_led_hw_control_get(struct phy_device *phydev, u8 index,
 		.probe          = dp8382x_probe,		\
 		.soft_reset	= dp83822_phy_reset,		\
 		.config_init	= dp83825_config_init,		\
+		.config_aneg	= dp83822_config_aneg,		\
+		.read_status	= dp83822_read_status,		\
 		.get_wol = dp83822_get_wol,			\
 		.set_wol = dp83822_set_wol,			\
 		.config_intr = dp83822_config_intr,		\
@@ -1293,6 +1340,8 @@ static int dp83822_led_hw_control_get(struct phy_device *phydev, u8 index,
 		.probe          = dp83826_probe,		\
 		.soft_reset	= dp83822_phy_reset,		\
 		.config_init	= dp83826_config_init,		\
+		.config_aneg	= dp83822_config_aneg,		\
+		.read_status	= dp83822_read_status,		\
 		.get_wol = dp83822_get_wol,			\
 		.set_wol = dp83822_set_wol,			\
 		.config_intr = dp83822_config_intr,		\
