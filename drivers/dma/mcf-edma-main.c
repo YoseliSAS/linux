@@ -243,6 +243,7 @@ static int mcf_edma_probe(struct platform_device *pdev)
 	dma_cap_set(DMA_PRIVATE, mcf_edma->dma_dev.cap_mask);
 	dma_cap_set(DMA_SLAVE, mcf_edma->dma_dev.cap_mask);
 	dma_cap_set(DMA_CYCLIC, mcf_edma->dma_dev.cap_mask);
+	dma_cap_set(DMA_INTERLEAVE, mcf_edma->dma_dev.cap_mask);
 
 	mcf_edma->dma_dev.dev = &pdev->dev;
 	mcf_edma->dma_dev.device_alloc_chan_resources =
@@ -253,6 +254,8 @@ static int mcf_edma_probe(struct platform_device *pdev)
 	mcf_edma->dma_dev.device_prep_dma_cyclic =
 			fsl_edma_prep_dma_cyclic;
 	mcf_edma->dma_dev.device_prep_slave_sg = fsl_edma_prep_slave_sg;
+	mcf_edma->dma_dev.device_prep_interleaved_dma =
+			fsl_edma_prep_interleaved_dma;
 	mcf_edma->dma_dev.device_tx_status = fsl_edma_tx_status;
 	mcf_edma->dma_dev.device_pause = fsl_edma_pause;
 	mcf_edma->dma_dev.device_resume = fsl_edma_resume;

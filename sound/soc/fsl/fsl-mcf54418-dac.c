@@ -153,8 +153,9 @@ struct mcf54418_dac_pcm_runtime {
 	struct dma_slave_config slave_config_left;	/* DMA config for left */
 	struct dma_slave_config slave_config_right;	/* DMA config for right */
 
-	/* Period tracking */
-	unsigned int current_period;		/* Current period being played */
+	/* Period tracking - double-buffering to avoid gaps */
+	unsigned int current_period;		/* Period that just completed (for ALSA) */
+	unsigned int next_submit_period;	/* Next period to submit to DMA queue */
 	unsigned int total_periods;		/* Total number of periods */
 	size_t period_bytes;			/* Size of each period in bytes */
 	dma_addr_t dma_addr;			/* DMA buffer physical address */
@@ -533,9 +534,6 @@ static int mcf54418_dac_pcm_hw_params(struct snd_soc_component *component,
 	prtd->slave_config_left.dst_addr = 0xFC098002;  /* DAC0 VDACR */
 	prtd->slave_config_left.dst_addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
 	prtd->slave_config_left.dst_maxburst = 1;
-	/* For stereo: set src_port_window_size=2 to get SOFF=4 for interleaved L/R */
-	if (channels == 2)
-		prtd->slave_config_left.src_port_window_size = 2;
 
 	ret = dmaengine_slave_config(prtd->dma_chan_left, &prtd->slave_config_left);
 	if (ret) {
@@ -550,8 +548,6 @@ static int mcf54418_dac_pcm_hw_params(struct snd_soc_component *component,
 		prtd->slave_config_right.dst_addr = 0xFC09C002;  /* DAC1 VDACR */
 		prtd->slave_config_right.dst_addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
 		prtd->slave_config_right.dst_maxburst = 1;
-		/* For stereo: set src_port_window_size=2 to get SOFF=4 for interleaved L/R */
-		prtd->slave_config_right.src_port_window_size = 2;
 
 		ret = dmaengine_slave_config(prtd->dma_chan_right, &prtd->slave_config_right);
 		if (ret) {
@@ -575,83 +571,168 @@ static int mcf54418_dac_pcm_hw_params(struct snd_soc_component *component,
 /* Forward declarations */
 static void mcf54418_dac_dma_complete(void *data);
 
-/* DMA Mode 0: Single period submission */
+/*
+ * Submit interleaved DMA transfer for stereo playback.
+ *
+ * Stereo audio data is interleaved as [L0][R0][L1][R1]... where each sample
+ * is 2 bytes. To send left samples to DAC0 and right samples to DAC1, we use
+ * the interleaved DMA API with source inter-chunk gaps (ICG):
+ *
+ * Left channel:  src_start=period_addr,   src_icg=2 (skip right sample)
+ * Right channel: src_start=period_addr+2, src_icg=2 (skip left sample)
+ *
+ * This results in TCD SOFF=4 (nbytes + src_icg = 2 + 2), which steps through
+ * the interleaved buffer correctly.
+ */
+static int mcf54418_dac_submit_interleaved(struct snd_pcm_substream *substream,
+					   struct dma_chan *chan,
+					   dma_addr_t src_addr, dma_addr_t dst_addr,
+					   unsigned int num_samples)
+{
+	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
+	struct dma_interleaved_template *xt;
+	struct dma_async_tx_descriptor *desc;
+	unsigned long flags;
+	dma_cookie_t cookie;
+
+
+	/* Allocate interleaved template with 1 chunk.
+	 * Use GFP_ATOMIC because this is called from trigger and DMA completion
+	 * callbacks which may be in atomic/interrupt context.
+	 */
+	xt = kzalloc(sizeof(*xt) + sizeof(struct data_chunk), GFP_ATOMIC);
+	if (!xt)
+		return -ENOMEM;
+
+	/* Configure interleaved transfer */
+	xt->src_start = src_addr;
+	xt->dst_start = dst_addr;
+	xt->dir = DMA_MEM_TO_DEV;
+	xt->src_inc = true;		/* Increment source address */
+	xt->dst_inc = false;		/* Fixed device address */
+	xt->src_sgl = true;		/* Source is scattered (has gaps) */
+	xt->dst_sgl = false;		/* Destination is contiguous (device) */
+	xt->numf = num_samples;		/* Number of frames (samples) */
+	xt->frame_size = 1;		/* One chunk per frame */
+
+	/* Configure chunk: 2 bytes per sample, 2 byte gap (other channel) */
+	xt->sgl[0].size = 2;		/* 16-bit sample */
+	xt->sgl[0].icg = 0;		/* No general ICG */
+	xt->sgl[0].src_icg = 2;		/* Skip 2 bytes (other channel's sample) */
+	xt->sgl[0].dst_icg = 0;		/* No destination gap (fixed address) */
+
+	/* Prepare interleaved DMA descriptor */
+	desc = dmaengine_prep_interleaved_dma(chan, xt,
+					      DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+	kfree(xt);  /* Template can be freed after prep */
+
+	if (!desc) {
+		dev_err(substream->pcm->card->dev,
+			"Failed to prep interleaved DMA (chan=%d)\n",
+			chan->chan_id);
+		return -ENOMEM;
+	}
+
+
+	/* Set completion callback */
+	desc->callback = mcf54418_dac_dma_complete;
+	desc->callback_param = substream;
+
+	/* Submit descriptor */
+	spin_lock_irqsave(&prtd->lock, flags);
+	cookie = dmaengine_submit(desc);
+	spin_unlock_irqrestore(&prtd->lock, flags);
+
+	if (dma_submit_error(cookie)) {
+		dev_err(substream->pcm->card->dev,
+			"Failed to submit interleaved DMA: %d\n", cookie);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+/* DMA Mode 0: Single period submission
+ * Uses next_submit_period to track which period to submit next.
+ * This enables double-buffering: we can have multiple periods queued
+ * so there's no gap when one completes.
+ */
 static int mcf54418_dac_submit_single(struct snd_pcm_substream *substream)
 {
 	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
 	struct dma_async_tx_descriptor *desc;
 	dma_addr_t period_addr;
 	unsigned long flags;
-	size_t transfer_bytes;
+	int ret;
+	unsigned int submit_period = prtd->next_submit_period;
 
-	/* Calculate address of current period */
-	period_addr = prtd->dma_addr + (prtd->current_period * prtd->period_bytes);
+	/* Calculate address of period to submit */
+	period_addr = prtd->dma_addr + (submit_period * prtd->period_bytes);
 
-	/* For stereo: each channel transfers half the data (de-interleaved)
-	 * For mono: single channel transfers all data
-	 */
-	transfer_bytes = (prtd->channels == 2) ? (prtd->period_bytes / 2) : prtd->period_bytes;
+	/* Advance next_submit_period for next call */
+	prtd->next_submit_period = (submit_period + 1) % prtd->total_periods;
 
-	/* Prepare left channel (or mono) DMA transfer */
-	desc = dmaengine_prep_slave_single(prtd->dma_chan_left, period_addr,
-					   transfer_bytes, DMA_MEM_TO_DEV,
-					   DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	if (!desc) {
-		dev_err(substream->pcm->card->dev,
-			"Failed to prep left DMA for period %u\n",
-			prtd->current_period);
-		return -ENOMEM;
-	}
-	/* Set completion callback */
-	desc->callback = mcf54418_dac_dma_complete;
-	desc->callback_param = substream;
-
-	/* Submit left channel descriptor */
-	spin_lock_irqsave(&prtd->lock, flags);
-	prtd->desc_left = desc;
-	prtd->cookie_left = dmaengine_submit(desc);
-	spin_unlock_irqrestore(&prtd->lock, flags);
-
-	if (dma_submit_error(prtd->cookie_left)) {
-		dev_err(substream->pcm->card->dev,
-			"Failed to submit left DMA: %d\n", prtd->cookie_left);
-		return -EIO;
-	}
-
-	/* For stereo, prepare and submit right channel */
 	if (prtd->channels == 2) {
-		struct dma_async_tx_descriptor *desc_right;
-		dma_addr_t right_addr = period_addr + 2;  /* Start at first right sample (offset 2 bytes) */
+		/*
+		 * Stereo mode: Use interleaved DMA API.
+		 * Buffer contains interleaved [L0][R0][L1][R1]... samples.
+		 * Each sample is 2 bytes (16-bit).
+		 * Number of samples per channel = period_bytes / 4 (2 bytes * 2 channels)
+		 */
+		unsigned int samples_per_channel = prtd->period_bytes / 4;
 
-		desc_right = dmaengine_prep_slave_single(prtd->dma_chan_right, right_addr,
-							 transfer_bytes, DMA_MEM_TO_DEV,
-							 DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-		if (!desc_right) {
+		/* Submit left channel: starts at period_addr */
+		ret = mcf54418_dac_submit_interleaved(substream,
+						      prtd->dma_chan_left,
+						      period_addr,
+						      0xFC098002,  /* DAC0 */
+						      samples_per_channel);
+		if (ret)
+			return ret;
+
+		/* Submit right channel: starts at period_addr + 2 (first right sample) */
+		ret = mcf54418_dac_submit_interleaved(substream,
+						      prtd->dma_chan_right,
+						      period_addr + 2,
+						      0xFC09C002,  /* DAC1 */
+						      samples_per_channel);
+		if (ret)
+			return ret;
+
+		/* Start both DMA engines */
+		dma_async_issue_pending(prtd->dma_chan_left);
+		dma_async_issue_pending(prtd->dma_chan_right);
+	} else {
+		/*
+		 * Mono mode: Use simple slave_single transfer.
+		 * All samples go to DAC0.
+		 */
+		desc = dmaengine_prep_slave_single(prtd->dma_chan_left, period_addr,
+						   prtd->period_bytes, DMA_MEM_TO_DEV,
+						   DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+		if (!desc) {
 			dev_err(substream->pcm->card->dev,
-				"Failed to prep right DMA for period %u\n",
+				"Failed to prep mono DMA for period %u\n",
 				prtd->current_period);
 			return -ENOMEM;
 		}
 
-		desc_right->callback = mcf54418_dac_dma_complete;
-		desc_right->callback_param = substream;
+		desc->callback = mcf54418_dac_dma_complete;
+		desc->callback_param = substream;
 
 		spin_lock_irqsave(&prtd->lock, flags);
-		prtd->desc_right = desc_right;
-		prtd->cookie_right = dmaengine_submit(desc_right);
+		prtd->desc_left = desc;
+		prtd->cookie_left = dmaengine_submit(desc);
 		spin_unlock_irqrestore(&prtd->lock, flags);
 
-		if (dma_submit_error(prtd->cookie_right)) {
+		if (dma_submit_error(prtd->cookie_left)) {
 			dev_err(substream->pcm->card->dev,
-				"Failed to submit right DMA: %d\n", prtd->cookie_right);
+				"Failed to submit mono DMA: %d\n", prtd->cookie_left);
 			return -EIO;
 		}
-	}
 
-	/* Start DMA engine(s) */
-	dma_async_issue_pending(prtd->dma_chan_left);
-	if (prtd->channels == 2)
-		dma_async_issue_pending(prtd->dma_chan_right);
+		dma_async_issue_pending(prtd->dma_chan_left);
+	}
 
 	return 0;
 }
@@ -661,35 +742,35 @@ static int mcf54418_dac_pcm_trigger(struct snd_soc_component *component,
 				    struct snd_pcm_substream *substream, int cmd)
 {
 	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
-	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
-	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	unsigned long flags;
 	int ret = 0;
-	static bool dai_trigger_called = false;  /* Track DAI trigger state */
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
 		spin_lock_irqsave(&prtd->lock, flags);
 		prtd->current_period = 0;
+		prtd->next_submit_period = 0;  /* Start submitting from period 0 */
 		prtd->running = true;
 		atomic_set(&prtd->dma_complete_count, 0);  /* Reset completion counter */
-		dai_trigger_called = false;  /* Reset flag for this playback session */
 		spin_unlock_irqrestore(&prtd->lock, flags);
 
-		/* Call DAI trigger BEFORE DMA to start DTIM3 first */
-		if (cpu_dai->driver->ops && cpu_dai->driver->ops->trigger && !dai_trigger_called) {
-			ret = cpu_dai->driver->ops->trigger(substream, cmd, cpu_dai);
-			if (ret) {
-				dev_err(component->dev, "DAI trigger failed: %d\n", ret);
-				prtd->running = false;
-				return ret;
-			}
-			dai_trigger_called = true;
-		}
+		/* NOTE: With trigger_start = SND_SOC_TRIGGER_ORDER_LDC, ASoC calls
+		 * DAI trigger (which starts DTIM3) BEFORE this component trigger.
+		 * So DTIM3 is already running when we get here.
+		 */
 
-		/* Now submit DMA with DTIM3 running */
-		ret = mcf54418_dac_submit_single(substream);
+		/* Double-buffering: submit 2 periods upfront to avoid gaps.
+		 * When period 0 completes, period 1 starts immediately.
+		 * The completion callback then submits period 2, etc.
+		 */
+		ret = mcf54418_dac_submit_single(substream);  /* Submit period 0 */
+		if (ret) {
+			prtd->running = false;
+			return ret;
+		}
+		ret = mcf54418_dac_submit_single(substream);  /* Submit period 1 */
 		if (ret)
 			prtd->running = false;
 		return ret;
@@ -701,16 +782,15 @@ static int mcf54418_dac_pcm_trigger(struct snd_soc_component *component,
 		prtd->running = false;
 		spin_unlock_irqrestore(&prtd->lock, flags);
 
-		/* Stop DMA */
-		dmaengine_terminate_async(prtd->dma_chan_left);
+		/* Stop DMA - use sync to ensure clean state before restart */
+		dmaengine_terminate_sync(prtd->dma_chan_left);
 		if (prtd->dma_chan_right) {
-			dmaengine_terminate_async(prtd->dma_chan_right);
+			dmaengine_terminate_sync(prtd->dma_chan_right);
 		}
 
-		/* Stop DTIM3 if we started it */
-		if (cpu_dai->driver->ops && cpu_dai->driver->ops->trigger && dai_trigger_called) {			cpu_dai->driver->ops->trigger(substream, cmd, cpu_dai);
-			dai_trigger_called = false;
-		}
+		/* NOTE: With trigger_start = SND_SOC_TRIGGER_ORDER_LDC, ASoC
+		 * handles DAI trigger STOP after this component trigger.
+		 */
 
 		return 0;
 

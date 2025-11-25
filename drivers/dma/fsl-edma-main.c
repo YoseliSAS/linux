@@ -841,6 +841,7 @@ static int fsl_edma_probe(struct platform_device *pdev)
 	dma_cap_set(DMA_SLAVE, fsl_edma->dma_dev.cap_mask);
 	dma_cap_set(DMA_CYCLIC, fsl_edma->dma_dev.cap_mask);
 	dma_cap_set(DMA_MEMCPY, fsl_edma->dma_dev.cap_mask);
+	dma_cap_set(DMA_INTERLEAVE, fsl_edma->dma_dev.cap_mask);
 
 	fsl_edma->dma_dev.dev = &pdev->dev;
 	fsl_edma->dma_dev.device_alloc_chan_resources
