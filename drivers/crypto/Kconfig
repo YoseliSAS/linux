@@ -129,6 +129,23 @@ config CRYPTO_DEV_MCFCAU_SHA1
           To compile this driver as a module, choose M here: the module
           will be called mcfcau-sha1.
 
+config CRYPTO_DEV_MCFCAU_SHA256
+        tristate "SHA256 digest algorithm (coldfire)"
+        depends on CRYPTO_DEV_MCFCAU
+        select CRYPTO_ALGAPI
+        select CRYPTO_SHA256
+        help
+          SHA-256 secure hash standard (FIPS 180-2).
+
+          This uses the CAU version 2 coprocessor found on MCF5441x which
+          has hardware acceleration for SHA-256.
+
+          Say 'Y' here to use the CAU coprocessor for
+          the CryptoAPI SHA256 algorithm.
+
+          To compile this driver as a module, choose M here: the module
+          will be called mcfcau-sha256.
+
 config ZCRYPT
 	tristate "Support for s390 cryptographic adapters"
 	depends on S390

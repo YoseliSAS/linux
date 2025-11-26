@@ -41,6 +41,9 @@
 #define MCFCAU_CA3		(0x5)
 #define MCFCAU_CA4		(0x6)
 #define MCFCAU_CA5		(0x7)
+#define MCFCAU_CA6		(0x8)
+#define MCFCAU_CA7		(0x9)
+#define MCFCAU_CA8		(0xA)
 
  /* CAU Commands */
 #define MCFCAU_CNOP		(0x000)
@@ -64,6 +67,7 @@
 #define MCFCAU_HASH		(0x120)
 #define MCFCAU_SHS		(0x130)
 #define MCFCAU_MDS		(0x140)
+#define MCFCAU_SHS2		(0x150)
 #define MCFCAU_ILL		(0x1F0)
 
 /* DESR Fields */
@@ -84,8 +88,15 @@
 #define MCFCAU_HFH		(0x2)	/* MD5 H(), SHA Parity() CA1^CA2^CA3 */
 #define MCFCAU_HFI		(0x3)	/* MD5 I() CA2^(CA1|~CA3) */
 #define MCFCAU_HFC		(0x4)	/* SHA Ch() CA1&CA2 ^ ~CA1&CA3 */
-#define MCFCAU_HFM		(0x5)
-/* SHA Maj() CA1&CA2 ^ CA1&CA3 ^ CA2&CA3 */
+#define MCFCAU_HFM		(0x5)	/* SHA Maj() CA1&CA2 ^ CA1&CA3 ^ CA2&CA3 */
+
+/* SHA-256 specific HASH Functions (CAU version 2) */
+#define MCFCAU_HF2C		(0x6)	/* SHA-256 Ch() CA4&CA5 ^ ~CA4&CA6 */
+#define MCFCAU_HF2M		(0x7)	/* SHA-256 Maj() CA0&CA1 ^ CA0&CA2 ^ CA1&CA2 */
+#define MCFCAU_HF2S		(0x8)	/* SHA-256 Sigma0 ROTR2^ROTR13^ROTR22(CA0) */
+#define MCFCAU_HF2T		(0x9)	/* SHA-256 Sigma1 ROTR6^ROTR11^ROTR25(CA4) */
+#define MCFCAU_HF2U		(0xA)	/* SHA-256 sigma0 ROTR7^ROTR18^SHR3(CA8) */
+#define MCFCAU_HF2V		(0xB)	/* SHA-256 sigma1 ROTR17^ROTR19^SHR10(CA8) */
 
 #define MCFCAU_CRA_PRIORITY	(300)
 

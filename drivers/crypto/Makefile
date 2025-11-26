@@ -55,3 +55,4 @@ obj-$(CONFIG_CRYPTO_DEV_MCFCAU_DES) += mcfcau-des.o
 obj-$(CONFIG_CRYPTO_DEV_MCFCAU_AES) += mcfcau-aes.o
 obj-$(CONFIG_CRYPTO_DEV_MCFCAU_MD5) += mcfcau-md5.o
 obj-$(CONFIG_CRYPTO_DEV_MCFCAU_SHA1) += mcfcau-sha1.o
+obj-$(CONFIG_CRYPTO_DEV_MCFCAU_SHA256) += mcfcau-sha256.o
