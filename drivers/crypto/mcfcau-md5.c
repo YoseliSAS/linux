@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /***************************************************************************
  * mcfcau-md5.c - Implementation of MD5 Message Digest Algorithm (RFC1321)
  *                for Freescale ColdFire Cryptographic Acceleration Unit (CAU).
@@ -7,7 +8,7 @@
  *         Shrek Wu B16972@freescale.com
  *         Alison Wang b18965@freescale.com
  *
- * NOTE: You can find the ColdFire CAU module on MCF5445X and MCF52235.
+ * NOTE: You can find the ColdFire CAU module on MCF5441x, MCF5445X and MCF52235.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -932,11 +933,10 @@ static struct shash_alg mcfcau_md5_alg = {
 
 static int __init mcfcau_md5_init(void)
 {
-	int ret = 0;
+	int ret;
 
 	ret = crypto_register_shash(&mcfcau_md5_alg);
-	printk(KERN_INFO MCFCAU_MD5_DRIVER_DESC " "
-		MCFCAU_MD5_DRIVER_VERSION " %s.\n",
+	pr_info(MCFCAU_MD5_DRIVER_DESC " " MCFCAU_MD5_DRIVER_VERSION " %s.\n",
 		ret ? "failed" : "registered");
 	return ret;
 }
@@ -944,8 +944,8 @@ static int __init mcfcau_md5_init(void)
 static void __exit mcfcau_md5_exit(void)
 {
 	crypto_unregister_shash(&mcfcau_md5_alg);
-	printk(KERN_INFO MCFCAU_MD5_DRIVER_DESC " "
-		MCFCAU_MD5_DRIVER_VERSION " unregistered.\n");
+	pr_info(MCFCAU_MD5_DRIVER_DESC " " MCFCAU_MD5_DRIVER_VERSION
+		" unregistered.\n");
 }
 
 module_init(mcfcau_md5_init);

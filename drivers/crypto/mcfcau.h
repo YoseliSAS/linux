@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /***************************************************************************
  * mcfcau.h - Common header file for Freescale ColdFire
  *            Cryptographic Acceleration Unit (CAU) drivers.
@@ -6,7 +7,8 @@
  * Author: Andrey Butok
  *         Shrek Wu B16972@freescale.com
  *
- * NOTE: You can find the ColdFire CAU module on MCF5445X and MCF52235.
+ * NOTE: You can find the ColdFire CAU module on MCF5441x, MCF5445X and MCF52235.
+ *       MCF5441x has CAU version 2 with additional SHA-256 support.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -102,11 +104,6 @@
 
 extern spinlock_t mcfcau_lock;
 
-#ifdef DEBUG
-#define DBG(fmt, args...) printk(KERN_INFO "[%s]  " fmt ,\
-			__func__, ## args)
-#else
-#define DBG(fmt, args...) do {} while (0)
-#endif
+#define DBG(fmt, args...) pr_debug("[%s]  " fmt, __func__, ## args)
 
 #endif

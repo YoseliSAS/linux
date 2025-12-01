@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /***************************************************************************
  * mcfcau-sha1.c - Implementation of SHA1 Secure Hash Algorithm
  *                for Freescale ColdFire Cryptographic Acceleration Unit (CAU).
@@ -7,7 +8,7 @@
  *         Shrek Wu B16972@freescale.com
  *         Alison Wang b18965@freescale.com
  *
- * NOTE: You can find the ColdFire CAU module on MCF5445X and MCF52235.
+ * NOTE: You can find the ColdFire CAU module on MCF5441x, MCF5445X and MCF52235.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -310,8 +311,8 @@ static struct shash_alg mcfcau_sha1_alg = {
 static int __init init(void)
 {
 	int ret = crypto_register_shash(&mcfcau_sha1_alg);
-	printk(KERN_INFO MCFCAU_SHA1_DRIVER_DESC " "
-		MCFCAU_SHA1_DRIVER_VERSION " %s.\n",
+
+	pr_info(MCFCAU_SHA1_DRIVER_DESC " " MCFCAU_SHA1_DRIVER_VERSION " %s.\n",
 		ret ? "failed" : "registered");
 	return ret;
 }
@@ -319,8 +320,8 @@ static int __init init(void)
 static void __exit fini(void)
 {
 	crypto_unregister_shash(&mcfcau_sha1_alg);
-	printk(KERN_INFO MCFCAU_SHA1_DRIVER_DESC " "
-		MCFCAU_SHA1_DRIVER_VERSION " unregistered.\n");
+	pr_info(MCFCAU_SHA1_DRIVER_DESC " " MCFCAU_SHA1_DRIVER_VERSION
+		" unregistered.\n");
 }
 
 module_init(init);

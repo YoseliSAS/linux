@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /***************************************************************************
  * mcfcau.c - Implementation of DES & Triple DES EDE Cipher Algorithms
  *                for Freescale ColdFire Cryptographic Acceleration Unit (CAU).
@@ -6,7 +7,7 @@
  * Author: Andrey Butok
  *         Shrek Wu B16972@freescale.com
  *
- * NOTE: You can find the ColdFire CAU module on MCF5445X and MCF52235.
+ * NOTE: You can find the ColdFire CAU module on MCF5441x, MCF5445X and MCF52235.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the

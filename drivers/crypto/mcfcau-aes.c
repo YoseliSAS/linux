@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /***************************************************************************
  * mcfcau-aes.c - Implementation of AES Cipher Algorithm
  *                for Freescale ColdFire Cryptographic Acceleration Unit (CAU).
@@ -6,7 +7,7 @@
  * Author: Andrey Butok
  *         Shrek Wu B16972@freescale.com
  *
- * NOTE: You can find the ColdFire CAU module on MCF5445X and MCF52235.
+ * NOTE: You can find the ColdFire CAU module on MCF5441x, MCF5445X and MCF52235.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -65,7 +66,6 @@ static int mcfcau_aes_setkey(struct crypto_tfm *tfm, const u8 *in_key,
 {
 	struct mcfcau_aes_ctx *ctx = crypto_tfm_ctx(tfm);
 	const u32 *key = (const u32 *)in_key;
-	u32 *flags = &tfm->crt_flags;
 	u32 i;
 	u32 *key_sch = (&ctx->buf[0]);
 	u32 *temp_p, *rcon_p;
@@ -75,10 +75,8 @@ static int mcfcau_aes_setkey(struct crypto_tfm *tfm, const u8 *in_key,
 
 	DBG("mcfcau_aes_setkey\n");
 
-	if (key_len % 8) {
-		*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
+	if (key_len % 8)
 		return -EINVAL;
-	}
 
 	Nk = key_len>>2;
 
@@ -331,7 +329,6 @@ static struct crypto_alg mcfcau_aes_alg = {
 	.cra_ctxsize		=	sizeof(struct mcfcau_aes_ctx),
 	.cra_alignmask		=	3,
 	.cra_module		=	THIS_MODULE,
-	.cra_list		=	LIST_HEAD_INIT(mcfcau_aes_alg.cra_list),
 	.cra_u			=	{
 		.cipher = {
 			.cia_min_keysize	=	MCFCAU_AES_MIN_KEY_SIZE,
@@ -347,8 +344,7 @@ static int __init mcfcau_aes_init(void)
 {
 	int ret = crypto_register_alg(&mcfcau_aes_alg);
 
-	printk(KERN_INFO MCFCAU_AES_DRIVER_DESC " "
-		MCFCAU_AES_DRIVER_VERSION " %s.\n",
+	pr_info(MCFCAU_AES_DRIVER_DESC " " MCFCAU_AES_DRIVER_VERSION " %s.\n",
 		ret ? "failed" : "registered");
 	return ret;
 }
@@ -356,13 +352,13 @@ static int __init mcfcau_aes_init(void)
 static void __exit mcfcau_aes_fini(void)
 {
 	crypto_unregister_alg(&mcfcau_aes_alg);
-	printk(KERN_INFO MCFCAU_AES_DRIVER_DESC " "
-		MCFCAU_AES_DRIVER_VERSION " unregistered.\n");
+	pr_info(MCFCAU_AES_DRIVER_DESC " " MCFCAU_AES_DRIVER_VERSION
+		" unregistered.\n");
 }
 
 module_init(mcfcau_aes_init);
 module_exit(mcfcau_aes_fini);
 
 MODULE_DESCRIPTION(MCFCAU_AES_DRIVER_DESC);
-MODULE_LICENSE("Dual BSD/GPL");
+MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrey Butok");

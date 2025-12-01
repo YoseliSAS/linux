@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /***************************************************************************
  * mcfcau-des.c - Implementation of DES & Triple DES EDE Cipher Algorithms
  *                for Freescale ColdFire Cryptographic Acceleration Unit (CAU).
@@ -6,7 +7,7 @@
  * Author: Andrey Butok
  *         Shrek Wu B16972@freescale.com
  *
- * NOTE: You can find the ColdFire CAU module on MCF5445X and MCF52235.
+ * NOTE: You can find the ColdFire CAU module on MCF5441x, MCF5445X and MCF52235.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -224,7 +225,6 @@ static int mcfcau_des_setkey(struct crypto_tfm *tfm, const u8 *key_p,
 	memcpy(dctx->expkey, key_p, keylen);
 	return 0;
 WEAK_KEY:
-	*flags |= CRYPTO_TFM_RES_WEAK_KEY;
 	return -EINVAL;
 }
 
@@ -320,15 +320,12 @@ static int mcfcau_des3_ede_setkey(
 {
 	const u32 *key = (const u32 *)key_p;
 	struct mcfcau_des3_ede_ctx *dctx = crypto_tfm_ctx(tfm);
-	u32 *flags = &tfm->crt_flags;
 
 	DBG("mcfcau_des3_ede_setkey\n");
 
 	if (unlikely(!((key[0] ^ key[2]) | (key[1] ^ key[3])) ||
-		     !((key[2] ^ key[4]) | (key[3] ^ key[5])))) {
-		*flags |= CRYPTO_TFM_RES_BAD_KEY_SCHED;
+		     !((key[2] ^ key[4]) | (key[3] ^ key[5]))))
 		return -EINVAL;
-	}
 
 	memcpy(dctx->expkey, key_p, keylen);
 
@@ -461,7 +458,6 @@ static struct crypto_alg mcfcau_des_alg = {
 	.cra_ctxsize		=	sizeof(struct mcfcau_des_ctx),
 	.cra_module		=	THIS_MODULE,
 	.cra_alignmask		=	3,
-	.cra_list		=	LIST_HEAD_INIT(mcfcau_des_alg.cra_list),
 	.cra_u			=	{ .cipher = {
 	.cia_min_keysize	=	MCFCAU_DES_KEY_SIZE,
 	.cia_max_keysize	=	MCFCAU_DES_KEY_SIZE,
@@ -479,8 +475,6 @@ static struct crypto_alg mcfcau_des3_ede_alg = {
 	.cra_ctxsize		=	sizeof(struct mcfcau_des3_ede_ctx),
 	.cra_module		=	THIS_MODULE,
 	.cra_alignmask		=	3,
-	.cra_list		=
-			LIST_HEAD_INIT(mcfcau_des3_ede_alg.cra_list),
 	.cra_u			=	{ .cipher = {
 	.cia_min_keysize	=	MCFCAU_DES3_EDE_KEY_SIZE,
 	.cia_max_keysize	=	MCFCAU_DES3_EDE_KEY_SIZE,
@@ -503,8 +497,7 @@ static int __init mcfcau_des_init(void)
 	if (ret < 0)
 		crypto_unregister_alg(&mcfcau_des_alg);
 out:
-	printk(KERN_INFO MCFCAU_DES_DRIVER_DESC " "
-		MCFCAU_DES_DRIVER_VERSION " %s.\n",
+	pr_info(MCFCAU_DES_DRIVER_DESC " " MCFCAU_DES_DRIVER_VERSION " %s.\n",
 		ret ? "failed" : "registered");
 	return ret;
 }
@@ -514,8 +507,8 @@ static void __exit mcfcau_des_exit(void)
 	crypto_unregister_alg(&mcfcau_des3_ede_alg);
 	crypto_unregister_alg(&mcfcau_des_alg);
 
-	printk(KERN_INFO MCFCAU_DES_DRIVER_DESC " "
-		MCFCAU_DES_DRIVER_VERSION " unregistered.\n");
+	pr_info(MCFCAU_DES_DRIVER_DESC " " MCFCAU_DES_DRIVER_VERSION
+		" unregistered.\n");
 }
 
 module_init(mcfcau_des_init);
