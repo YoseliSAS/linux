@@ -100,7 +100,7 @@
 #define MCFCAU_HF2U		(0xA)	/* SHA-256 sigma0 ROTR7^ROTR18^SHR3(CA8) */
 #define MCFCAU_HF2V		(0xB)	/* SHA-256 sigma1 ROTR17^ROTR19^SHR10(CA8) */
 
-#define MCFCAU_CRA_PRIORITY	(300)
+#define MCFCAU_CRA_PRIORITY	(400)
 
 extern spinlock_t mcfcau_lock;
 
