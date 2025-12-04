@@ -566,12 +566,12 @@ fec_enet_txq_submit_frag_skb(struct fec_enet_priv_tx_q *txq,
 
 		status = fec16_to_cpu(bdp->cbd_sc);
 		status &= ~BD_ENET_TX_STATS;
-		status |= (BD_ENET_TX_TC | BD_ENET_TX_READY);
+		status |= BD_ENET_TX_READY;
 		frag_len = skb_frag_size(&skb_shinfo(skb)->frags[frag]);
 
-		/* Handle the last BD specially */
+		/* Handle the last BD specially - TC only valid when L is set */
 		if (frag == nr_frags - 1) {
-			status |= (BD_ENET_TX_INTR | BD_ENET_TX_LAST);
+			status |= (BD_ENET_TX_INTR | BD_ENET_TX_LAST | BD_ENET_TX_TC);
 			if (fep->bufdesc_ex) {
 				estatus |= BD_ENET_TX_INT;
 				if (unlikely(skb_shinfo(skb)->tx_flags &
@@ -775,7 +775,7 @@ fec_enet_txq_put_data_tso(struct fec_enet_priv_tx_q *txq, struct sk_buff *skb,
 	status = fec16_to_cpu(bdp->cbd_sc);
 	status &= ~BD_ENET_TX_STATS;
 
-	status |= (BD_ENET_TX_TC | BD_ENET_TX_READY);
+	status |= BD_ENET_TX_READY;
 
 	if (((unsigned long) data) & fep->tx_align ||
 		fep->quirks & FEC_QUIRK_SWAP_FRAME) {
@@ -835,7 +835,7 @@ fec_enet_txq_put_hdr_tso(struct fec_enet_priv_tx_q *txq,
 
 	status = fec16_to_cpu(bdp->cbd_sc);
 	status &= ~BD_ENET_TX_STATS;
-	status |= (BD_ENET_TX_TC | BD_ENET_TX_READY);
+	status |= BD_ENET_TX_READY;
 
 	bufaddr = txq->tso_hdrs + index * TSO_HEADER_SIZE;
 	dmabuf = txq->tso_hdrs_dma + index * TSO_HEADER_SIZE;
