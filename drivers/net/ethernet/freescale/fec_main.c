@@ -4633,7 +4633,7 @@ fec_probe_finish(struct platform_device *pdev)
 			goto failed_irq;
 		}
 		ret = devm_request_irq(&pdev->dev, irq, fec_enet_interrupt,
-				       0, pdev->name, ndev);
+				       IRQF_NO_THREAD, pdev->name, ndev);
 		if (ret)
 			goto failed_irq;
 
