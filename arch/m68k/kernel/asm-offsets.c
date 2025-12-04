@@ -42,6 +42,7 @@ int main(void)
 	/* offsets into the thread_info struct */
 	DEFINE(TINFO_PREEMPT, offsetof(struct thread_info, preempt_count));
 	DEFINE(TINFO_FLAGS, offsetof(struct thread_info, flags));
+	DEFINE(TINFO_TP_VALUE, offsetof(struct thread_info, tp_value));
 
 	/* offsets into the pt_regs */
 	DEFINE(PT_OFF_D0, offsetof(struct pt_regs, d0));

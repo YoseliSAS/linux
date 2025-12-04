@@ -173,6 +173,22 @@ ENTRY(inthandler)
 	bra	ret_from_exception
 
 /*
+ * Fast get_thread_area trap handler (TRAP #1).
+ * Returns the thread pointer (tp_value) in d0 without full syscall overhead.
+ *
+ * ColdFire exception frame on entry:
+ *   sp+0: format/vector word (2 bytes) + sr (2 bytes)
+ *   sp+4: pc (4 bytes)
+ */
+.globl fast_get_tp
+ENTRY(fast_get_tp)
+	movel	%sp,%d0			| get current stack pointer
+	andl	#-THREAD_SIZE,%d0	| mask to get thread_info
+	movel	%d0,%a0			| put in address register
+	movel	%a0@(TINFO_TP_VALUE),%d0 | load tp_value into d0
+	rte				| return from exception
+
+/*
  * Beware - when entering resume, prev (the current task) is
  * in a0, next (the new task) is in a1, so don't change these
  * registers until their contents are no longer needed.

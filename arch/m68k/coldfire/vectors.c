@@ -40,6 +40,7 @@ asmlinkage void buserr(void);
 asmlinkage void trap(void);
 asmlinkage void system_call(void);
 asmlinkage void inthandler(void);
+asmlinkage void fast_get_tp(void);
 
 void __init trap_init(void)
 {
@@ -63,6 +64,7 @@ void __init trap_init(void)
 
 	_ramvec[2] = buserr;
 	_ramvec[32] = system_call;
+	_ramvec[33] = fast_get_tp;	/* TRAP #1: fast get_thread_area */
 
 #ifdef TRAP_DBG_INTERRUPT
 	_ramvec[12] = dbginterrupt;
