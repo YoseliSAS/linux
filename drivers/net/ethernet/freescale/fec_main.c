@@ -192,7 +192,8 @@ static const struct fec_devinfo fec_s32v234_info = {
 static const struct fec_devinfo fec_m54418_info = {
 	.quirks = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_RACC |
 		  FEC_QUIRK_HAS_BUFDESC_EX | FEC_QUIRK_HAS_CSUM |
-		  FEC_QUIRK_NO_HARD_RESET | FEC_QUIRK_CLEAR_SETUP_MII,
+		  FEC_QUIRK_NO_HARD_RESET | FEC_QUIRK_CLEAR_SETUP_MII |
+		  FEC_QUIRK_NO_TSO,
 };
 
 static struct platform_device_id fec_devtype[] = {
@@ -4231,12 +4232,14 @@ static int fec_enet_init(struct net_device *ndev)
 		ndev->features |= NETIF_F_HW_VLAN_CTAG_RX;
 
 	if (fep->quirks & FEC_QUIRK_HAS_CSUM) {
-		netif_set_tso_max_segs(ndev, FEC_MAX_TSO_SEGS);
-
-		/* enable hw accelerator */
 		ndev->features |= (NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM
-				| NETIF_F_RXCSUM | NETIF_F_SG | NETIF_F_TSO);
+				| NETIF_F_RXCSUM);
 		fep->csum_flags |= FLAG_RX_CSUM_ENABLED;
+
+		if (!(fep->quirks & FEC_QUIRK_NO_TSO)) {
+			netif_set_tso_max_segs(ndev, FEC_MAX_TSO_SEGS);
+			ndev->features |= (NETIF_F_SG | NETIF_F_TSO);
+		}
 	}
 
 	if (fep->quirks & FEC_QUIRK_HAS_MULTI_QUEUES) {

@@ -517,6 +517,14 @@ struct bufdesc_ex {
 /* Jumbo Frame support */
 #define FEC_QUIRK_JUMBO_FRAME		BIT(25)
 
+/*
+ * Some SoCs (e.g., ColdFire MCF54418) have a hardware limitation in the
+ * enhanced TX buffer descriptor where the data length field ignores
+ * bits[4:0]. This truncates segment lengths to 32-byte boundaries,
+ * breaking TSO/SG for multi-BD frames. Checksum offload still works.
+ */
+#define FEC_QUIRK_NO_TSO		BIT(26)
+
 struct bufdesc_prop {
 	int qid;
 	/* Address of Rx and Tx buffers */
