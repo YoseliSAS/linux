@@ -191,6 +191,7 @@ static const struct fec_devinfo fec_s32v234_info = {
 
 static const struct fec_devinfo fec_m54418_info = {
 	.quirks = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_RACC |
+		  FEC_QUIRK_HAS_BUFDESC_EX | FEC_QUIRK_HAS_CSUM |
 		  FEC_QUIRK_NO_HARD_RESET | FEC_QUIRK_CLEAR_SETUP_MII,
 };
 
@@ -4565,7 +4566,13 @@ fec_probe_finish(struct platform_device *pdev)
 	fep->clk_ptp = devm_clk_get(&pdev->dev, "ptp");
 	if (IS_ERR(fep->clk_ptp)) {
 		fep->clk_ptp = NULL;
-		fep->bufdesc_ex = false;
+		/*
+		 * PTP clock is only needed for IEEE 1588 timestamping, not for
+		 * checksum offload. Keep bufdesc_ex enabled for checksum
+		 * offload even without PTP clock.
+		 */
+		if (!(fep->quirks & FEC_QUIRK_HAS_CSUM))
+			fep->bufdesc_ex = false;
 	}
 
 	ret = fec_enet_clk_enable(ndev, true);
