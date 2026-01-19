@@ -524,13 +524,7 @@ int dspi_slave_next_xfer_tx_dma(struct driver_data *drv_data)
 
 	if (drv_data->mode != DSPI_DMA_MODE)
 		return -EINVAL;
-#if 0
-	if (atomic_read(&drv_data->tx_dma_running) == 1) {
-		// Already running, do nothing
-		trace_printk("TX DMA already running\n");
-		return 0;
-	}
-#endif
+
 	raw_spin_lock_irqsave(&chrdev_drvdata->lock, flags);
 	nb_bytes = memcpy_16to32((void *)current_phys,
 				 chrdev_drvdata->tx_buffer,
@@ -725,17 +719,6 @@ static ssize_t chrdev_device_read(struct file *filp,
 #ifdef DSPI_DEBUG_TRACE
 	trace_printk("wait for finished TX\n");
 	trace_printk("Reinit TX completion\n");
-#endif
-#if 0
-	/* If TX is not finished, we will have an issue ! */
-	status = wait_for_completion_interruptible(&chrdev_drvdata->write_complete);
-	if (status == -ERESTARTSYS) {
-		trace_printk("Signal received\n");
-		return 0;
-	}
-#endif
-
-#ifdef DSPI_DEBUG_TRACE
 	trace_printk("wait for next RX\n");
 #endif
 
@@ -907,7 +890,7 @@ static int chrdev_device_open(struct inode *inode, struct file *filp)
 	 * at any one time
 	 */
 	if (!mutex_trylock(&chrdev_client_mutex)) {
-		printk(KERN_DEBUG "DSPI: Try to open char device more than once.\n");
+		pr_debug("DSPI: Try to open char device more than once\n");
 		return -EBUSY;
 	}
 
@@ -1007,20 +990,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	local_lock_irqsave(&drv_data->lock, flags);
 
 	reinit_timeout(DSPI_SLAVE_RUNNER_TIMEOUT_MS);
-#if 0
-	if (chrdev_drvdata->irq_status & MCF_DSPI_DSR_RFOF) {
-		/* RX HW FIFO overflow occurs */
-		drv_data->stat_rx_hwfifo_overflow += 1;
-#ifndef CONFIG_TRACING
-		dev_dbg(&drv_data->pdev->dev,
-			"DSPI: dspi-slave: RX FIFO overflow occurs (occur. #%llu) !\n",
-			drv_data->stat_rx_hwfifo_overflow);
-#else
-		trace_printk("RX FIFO overflow\n");
-#endif
-		restart_dspi = true;
-	}
- #endif
+
 	if (drv_data->irq_status & MCF_DSPI_DSR_TFUF) {
 		/* TX HW FIFO underflow occurs */
 		drv_data->stat_tx_hwfifo_underflow += 1;
@@ -1185,7 +1155,11 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	drv_data->pdev = pdev;
 
 	drv_data->dspi_base = res->start;
-	dspi_slave_dma_setup_channel(drv_data);
+	ret = dspi_slave_dma_setup_channel(drv_data);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to setup DMA channels: %d\n", ret);
+		goto out_error_after_drv_data_alloc;
+	}
 
 	irq = platform_get_irq(pdev, 0);
 	status = request_threaded_irq(irq, dspi_interrupt, NULL,
@@ -1238,10 +1212,14 @@ static int coldfire_spi_probe(struct platform_device *pdev)
 	}
 
 	/* Right now, we only support one /dev entry, and one pointer to drv_data.
-	 * if developer register more than one "dspi-slave" instance in platform,
-	 * this will stop the runtime at this point.
+	 * If developer registers more than one "dspi-slave" instance in platform,
+	 * we return an error instead of crashing the kernel.
 	 */
-	BUG_ON(chrdev_drvdata != NULL);
+	if (WARN_ON(chrdev_drvdata)) {
+		dev_err(&pdev->dev, "Only one DSPI slave instance is supported\n");
+		status = -EBUSY;
+		goto out_error_devreg;
+	}
 	chrdev_drvdata = drv_data;
 
 	chrdev_drvdata->frame_perf.latency = 0;
@@ -1378,7 +1356,7 @@ static void coldfire_spi_remove(struct platform_device *pdev)
 	/* Prevent double remove */
 	platform_set_drvdata(pdev, NULL);
 
-	printk(KERN_INFO "DSPI: Coldfire slave unloaded (DSPI%d)\n", platform_info->bus_num);
+	dev_info(dev, "Coldfire slave unloaded (DSPI%d)\n", platform_info->bus_num);
 }
 
 static void coldfire_spi_shutdown(struct platform_device *pdev)
