@@ -28,6 +28,21 @@
 
 /* Removed dma_mode parameter - using single period mode only for reliability */
 
+/*
+ * Board type selection - determines GPIO pin assignments
+ *
+ * The MCF54418 is used on multiple boards with different GPIO mappings:
+ * - DLCNext:  Audio on PB0/PC7 (GPIO 8/23), requires muxing from CAN1
+ * - DLCMI20:  Audio on PG2/PH4 (GPIO 50/60), no pin conflict
+ *
+ * Set via module parameter: board_type=dlcnext or board_type=dlcmi20
+ * Note: On DLCNext, loading this module disables CAN1 (shared pins).
+ *       To use CAN1, don't load this module.
+ */
+static char *board_type = "dlcnext";
+module_param(board_type, charp, 0444);
+MODULE_PARM_DESC(board_type, "Board type: dlcnext (default) or dlcmi20");
+
 /* DAC Register offsets */
 #define DAC_CR			0x00	/* Control Register */
 #define DAC_DATA		0x02	/* Data Register */
@@ -109,9 +124,20 @@
 #define MCF_EDMA_CHAN_DAC0	62
 #define MCF_EDMA_CHAN_DAC1	63
 
-/* GPIO pins for audio control (Port B pin 0, Port C pin 7) */
-#define MCF_GPIO_AUDIO_MUTE	8	/* PB0: Active LOW to unmute (HIGH = muted!) */
-#define MCF_GPIO_AUDIO_SHUTDOWN	23	/* PC7: Active LOW to power on (HIGH = shutdown!) */
+/*
+ * GPIO pins for audio control - board-dependent
+ *
+ * DLCNext:  PB0 (GPIO 8) = MUTE, PC7 (GPIO 23) = SHUTDOWN
+ *           These pins are shared with CAN1, requires PAR_CANI2C muxing
+ * DLCMI20:  PG2 (GPIO 50) = MUTE, PH4 (GPIO 60) = SHUTDOWN
+ *           CAN1 uses separate pins, no muxing conflict
+ */
+#define MCF_GPIO_AUDIO_MUTE_DLCNEXT	8	/* PB0 */
+#define MCF_GPIO_AUDIO_SHUTDOWN_DLCNEXT	23	/* PC7 */
+#define MCF_GPIO_AUDIO_MUTE_DLCMI20	50	/* PG2 */
+#define MCF_GPIO_AUDIO_SHUTDOWN_DLCMI20	60	/* PH4 */
+
+/* PAR_CANI2C muxing - only needed on DLCNext where audio shares CAN1 pins */
 #define MCF_GPIO_PAR_CANI2C_CAN1TX_MASK		(0xF3)	/* Clear bits[3:2] */
 #define MCF_GPIO_PAR_CANI2C_CAN1TX_GPIO		(0x00)	/* GPIO mode */
 #define MCF_GPIO_PAR_CANI2C_CAN1RX_MASK		(0xFC)	/* Clear bits[1:0] */
@@ -1254,47 +1280,56 @@ static int mcf54418_dac_probe(struct platform_device *pdev)
 	/* Enable DAC analog outputs */
 	mcf54418_dac_enable_analog_outputs(dac);
 
-	{
+	/* Setup GPIO pins based on board type */
+	if (strcmp(board_type, "dlcmi20") == 0) {
+		/* DLCMI20: Audio on PG2/PH4 */
+		dac->gpio_mute = MCF_GPIO_AUDIO_MUTE_DLCMI20;
+		dac->gpio_shutdown = MCF_GPIO_AUDIO_SHUTDOWN_DLCMI20;
+		dev_info(dev, "Board: DLCMI20 (MUTE=GPIO%d, SHUTDOWN=GPIO%d)\n",
+			 dac->gpio_mute, dac->gpio_shutdown);
+	} else {
+		/* DLCNext (default): Audio on PB0/PC7, mux from CAN1 to GPIO */
 		void __iomem *par_cani2c_addr = (void __iomem *)MCFGPIO_PAR_CANI2C;
 		u8 par_cani2c;
 
 		par_cani2c = __raw_readb(par_cani2c_addr);
-
-		/* Clear CAN1TX[3:2] and CAN1RX[1:0] fields to select GPIO mode */
-		par_cani2c &= MCF_GPIO_PAR_CANI2C_CAN1TX_MASK;  /* Clear bits[3:2] */
-		par_cani2c &= MCF_GPIO_PAR_CANI2C_CAN1RX_MASK;  /* Clear bits[1:0] */
-		par_cani2c |= MCF_GPIO_PAR_CANI2C_CAN1TX_GPIO;  /* Set PB0 = GPIO (0x00) */
-		par_cani2c |= MCF_GPIO_PAR_CANI2C_CAN1RX_GPIO;  /* Set PC7 = GPIO (0x00) */
-
+		par_cani2c &= MCF_GPIO_PAR_CANI2C_CAN1TX_MASK;
+		par_cani2c &= MCF_GPIO_PAR_CANI2C_CAN1RX_MASK;
+		par_cani2c |= MCF_GPIO_PAR_CANI2C_CAN1TX_GPIO;
+		par_cani2c |= MCF_GPIO_PAR_CANI2C_CAN1RX_GPIO;
 		__raw_writeb(par_cani2c, par_cani2c_addr);
+
+		dac->gpio_mute = MCF_GPIO_AUDIO_MUTE_DLCNEXT;
+		dac->gpio_shutdown = MCF_GPIO_AUDIO_SHUTDOWN_DLCNEXT;
+		dev_info(dev, "Board: DLCNext (MUTE=GPIO%d, SHUTDOWN=GPIO%d)\n",
+			 dac->gpio_mute, dac->gpio_shutdown);
 	}
 
-	/* Setup GPIO for audio control */
-	dac->gpio_mute = MCF_GPIO_AUDIO_MUTE;
-	dac->gpio_shutdown = MCF_GPIO_AUDIO_SHUTDOWN;
-	dac->mute_inverted = true;  /* GPIO LOW (0V) = unmuted, so invert control logic */
-	dac->shutdown_inverted = true;  /* GPIO LOW (0V) = powered on, so invert control logic */
+	dac->mute_inverted = true;  /* GPIO LOW = unmuted */
+	dac->shutdown_inverted = true;  /* GPIO LOW = powered on */
 
 	ret = gpio_request(dac->gpio_mute, "audio-mute");
 	if (ret) {
-		dev_err(dev, "Failed to request audio mute GPIO: %d\n", ret);
+		dev_err(dev, "Failed to request audio mute GPIO %d: %d\n",
+			dac->gpio_mute, ret);
 		goto err_clk;
 	}
 
 	ret = gpio_request(dac->gpio_shutdown, "audio-shutdown");
 	if (ret) {
-		dev_err(dev, "Failed to request audio shutdown GPIO: %d\n", ret);
+		dev_err(dev, "Failed to request audio shutdown GPIO %d: %d\n",
+			dac->gpio_shutdown, ret);
 		goto err_gpio_mute;
 	}
 
-	gpio_direction_output(dac->gpio_mute, 0);	/* LOW (0V) = unmuted */
-	gpio_direction_output(dac->gpio_shutdown, 0);	/* LOW (0V) = powered on */
+	gpio_direction_output(dac->gpio_mute, 0);	/* LOW = unmuted */
+	gpio_direction_output(dac->gpio_shutdown, 0);	/* LOW = powered on */
 
 	/* Setup DMA parameters for compat mode (non-DT platform) */
 	dac->dma_params_tx.addr = dac0_phys_addr + DAC_DATA;
-	dac->dma_params_tx.maxburst = 1;  /* 1 word per burst (16-bit) */
+	dac->dma_params_tx.maxburst = 1;
 	dac->dma_params_tx.addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
-	dac->dma_params_tx.filter_data = (void *)(uintptr_t)62;  /* DMA channel 62 for DAC0 */
+	dac->dma_params_tx.filter_data = (void *)(uintptr_t)62;
 
 	platform_set_drvdata(pdev, dac);
 
@@ -1324,12 +1359,8 @@ static void mcf54418_dac_remove(struct platform_device *pdev)
 
 	mcf54418_dac_enable(dac, false);
 
-	/* Disable audio amplifier */
-	gpio_set_value(dac->gpio_mute, 0);	/* LOW = Mute */
-	gpio_set_value(dac->gpio_shutdown, 0);	/* LOW = Shutdown */
-
-	/* DMA channels are managed by dmaengine PCM layer */
-
+	gpio_set_value(dac->gpio_mute, 1);	/* HIGH = Mute */
+	gpio_set_value(dac->gpio_shutdown, 1);	/* HIGH = Shutdown */
 	gpio_free(dac->gpio_shutdown);
 	gpio_free(dac->gpio_mute);
 
