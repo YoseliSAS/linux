@@ -3139,7 +3139,8 @@ static int coldfire_fec_mdio_read(struct mii_bus *bus,
 	int ret;
 	ret = fec_mdio_transfer(bus, phy_id, reg,
 		mk_mii_read(reg));
-	return ret;
+	/* Return only the data portion (bits 15:0) of the MMFR register */
+	return ret & 0xffff;
 }
 
 static int coldfire_fec_mdio_write(struct mii_bus *bus,
