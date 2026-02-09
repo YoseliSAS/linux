@@ -3479,6 +3479,130 @@ static void switch_hw_init(void)
 	MCF_PPMCR0 = 0;
 }
 
+/*
+ * ethtool operations for switch
+ *
+ * The switch has two PHYs but only one net_device. Use ethtool_port
+ * to select which PHY to operate on. Default is port 0.
+ *
+ * Set the port via sysfs: echo 1 > /sys/class/net/eth0/ethtool_port
+ */
+static int switch_ethtool_get_link_ksettings(struct net_device *dev,
+					     struct ethtool_link_ksettings *cmd)
+{
+	struct switch_enet_private *fep = netdev_priv(dev);
+	struct phy_device *phydev;
+	int port = fep->ethtool_port;
+
+	if (port < 0 || port >= SWITCH_EPORT_NUMBER)
+		port = 0;
+
+	phydev = fep->phydev[port];
+	if (!phydev)
+		return -ENODEV;
+
+	phy_ethtool_ksettings_get(phydev, cmd);
+	return 0;
+}
+
+static int switch_ethtool_set_link_ksettings(struct net_device *dev,
+					     const struct ethtool_link_ksettings *cmd)
+{
+	struct switch_enet_private *fep = netdev_priv(dev);
+	struct phy_device *phydev;
+	int port = fep->ethtool_port;
+
+	if (port < 0 || port >= SWITCH_EPORT_NUMBER)
+		port = 0;
+
+	phydev = fep->phydev[port];
+	if (!phydev)
+		return -ENODEV;
+
+	return phy_ethtool_ksettings_set(phydev, cmd);
+}
+
+static int switch_ethtool_nway_reset(struct net_device *dev)
+{
+	struct switch_enet_private *fep = netdev_priv(dev);
+	struct phy_device *phydev;
+	int port = fep->ethtool_port;
+
+	if (port < 0 || port >= SWITCH_EPORT_NUMBER)
+		port = 0;
+
+	phydev = fep->phydev[port];
+	if (!phydev)
+		return -ENODEV;
+
+	return phy_restart_aneg(phydev);
+}
+
+static u32 switch_ethtool_get_link(struct net_device *dev)
+{
+	struct switch_enet_private *fep = netdev_priv(dev);
+	struct phy_device *phydev;
+	int port = fep->ethtool_port;
+
+	if (port < 0 || port >= SWITCH_EPORT_NUMBER)
+		port = 0;
+
+	phydev = fep->phydev[port];
+	if (!phydev)
+		return 0;
+
+	return phydev->link;
+}
+
+static const struct ethtool_ops switch_ethtool_ops = {
+	.get_link		= switch_ethtool_get_link,
+	.get_link_ksettings	= switch_ethtool_get_link_ksettings,
+	.set_link_ksettings	= switch_ethtool_set_link_ksettings,
+	.nway_reset		= switch_ethtool_nway_reset,
+};
+
+/* sysfs attribute for ethtool port selection */
+static ssize_t ethtool_port_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct net_device *ndev = to_net_dev(dev);
+	struct switch_enet_private *fep = netdev_priv(ndev);
+
+	return sysfs_emit(buf, "%d\n", fep->ethtool_port);
+}
+
+static ssize_t ethtool_port_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct net_device *ndev = to_net_dev(dev);
+	struct switch_enet_private *fep = netdev_priv(ndev);
+	int port;
+
+	if (kstrtoint(buf, 10, &port) < 0)
+		return -EINVAL;
+
+	if (port < 0 || port >= SWITCH_EPORT_NUMBER)
+		return -EINVAL;
+
+	fep->ethtool_port = port;
+	dev_info(dev, "ethtool now operates on port %d (PHY %d)\n",
+		 port, fep->phydev[port] ? fep->phydev[port]->mdio.addr : -1);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(ethtool_port);
+
+static struct attribute *switch_sysfs_attrs[] = {
+	&dev_attr_ethtool_port.attr,
+	NULL,
+};
+
+static const struct attribute_group switch_sysfs_group = {
+	.attrs = switch_sysfs_attrs,
+};
+
 static const struct net_device_ops switch_netdev_ops = {
 	.ndo_open		= switch_enet_open,
 	.ndo_stop		= switch_enet_close,
@@ -3568,6 +3692,10 @@ static int switch_enet_init(struct platform_device *pdev)
 	/* The FEC Ethernet specific entries in the device structure. */
 	dev->watchdog_timeo = TX_TIMEOUT;
 	dev->netdev_ops	= &switch_netdev_ops;
+	dev->ethtool_ops = &switch_ethtool_ops;
+
+	/* Default ethtool port to 0 */
+	fep->ethtool_port = 0;
 
 	fep->dirty_tx = fep->cur_tx = fep->tx_bd_base;
 	fep->cur_rx = fep->rx_bd_base;
@@ -3897,6 +4025,11 @@ static int eth_switch_probe_finish(struct platform_device *pdev)
 		return -EIO;
 	}
 
+	/* Register sysfs group for ethtool port selection */
+	err = sysfs_create_group(&dev->dev.kobj, &switch_sysfs_group);
+	if (err)
+		dev_warn(&dev->dev, "failed to create sysfs group: %d\n", err);
+
 	task = kthread_run(switch_enet_learning, fep,
 			"modelo l2switch");
 	if (IS_ERR(task)) {
@@ -3946,6 +4079,7 @@ static void eth_switch_remove(struct platform_device *pdev)
 			fep = chip->fep_host[i];
 			dev = fep->netdev;
 			fep->sequence_done = 1;
+			sysfs_remove_group(&dev->dev.kobj, &switch_sysfs_group);
 			unregister_netdev(dev);
 			free_netdev(dev);
 

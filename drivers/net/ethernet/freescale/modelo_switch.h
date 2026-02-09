@@ -667,6 +667,9 @@ struct switch_enet_private {
 	/* Timer for Aging */
 	struct timer_list       timer_aging;
 	int learning_irqhandle_enable;
+
+	/* ethtool port selection (0 or 1) for PHY operations */
+	int ethtool_port;
 };
 
 struct switch_platform_private {
