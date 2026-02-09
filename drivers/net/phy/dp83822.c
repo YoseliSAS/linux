@@ -22,6 +22,7 @@
 #define DP83826C_PHY_ID		0x2000a130
 #define DP83826NC_PHY_ID	0x2000a110
 
+#define MII_DP83822_CTRL_1	0x09
 #define MII_DP83822_CTRL_2	0x0a
 #define MII_DP83822_PHYSTS	0x10
 #define MII_DP83822_PHYSCR	0x11
@@ -29,6 +30,7 @@
 #define MII_DP83822_MISR2	0x13
 #define MII_DP83822_FCSCR	0x14
 #define MII_DP83822_RCSR	0x17
+#define MII_DP83822_PHYCR	0x19
 #define MII_DP83822_RESET_CTRL	0x1f
 #define MII_DP83822_MLEDCR	0x25
 #define MII_DP83822_LDCTRL	0x403
@@ -62,8 +64,8 @@
 /* PHYSCR Register Fields */
 #define DP83822_PHYSCR_INT_OE		BIT(0) /* Interrupt Output Enable */
 #define DP83822_PHYSCR_INTEN		BIT(1) /* Interrupt Enable */
-#define DP83822_PHYSCR_MDIX_EN		BIT(15) /* MDI/MDIX Enable */
-#define DP83822_PHYSCR_FORCE_MDIX	BIT(14) /* Force MDIX */
+#define DP83822_PHYCR_MDIX_EN		BIT(15) /* MDI/MDIX Enable */
+#define DP83822_PHYCR_FORCE_MDIX	BIT(14) /* Force MDIX */
 
 /* MISR1 bits */
 #define DP83822_RX_ERR_HF_INT_EN	BIT(0)
@@ -484,28 +486,37 @@ static int dp83822_read_status(struct phy_device *phydev)
 
 static int dp83822_config_mdix(struct phy_device *phydev)
 {
+	int ret = 0;
+
+	phy_write(phydev, MII_DP83822_CTRL_1, 0x20);
 	switch (phydev->mdix_ctrl) {
 	case ETH_TP_MDI_AUTO:
 		/* Enable Auto-MDIX */
-		return phy_modify(phydev, MII_DP83822_PHYSCR,
-				  DP83822_PHYSCR_FORCE_MDIX |
-				  DP83822_PHYSCR_MDIX_EN,
-				  DP83822_PHYSCR_MDIX_EN);
+		ret = phy_modify(phydev, MII_DP83822_PHYCR,
+				  DP83822_PHYCR_FORCE_MDIX |
+				  DP83822_PHYCR_MDIX_EN,
+				  DP83822_PHYCR_MDIX_EN);
+		break;
 	case ETH_TP_MDI:
 		/* Force MDI (straight) - disable auto and force bits */
-		return phy_modify(phydev, MII_DP83822_PHYSCR,
-				  DP83822_PHYSCR_FORCE_MDIX |
-				  DP83822_PHYSCR_MDIX_EN,
+		ret = phy_modify(phydev, MII_DP83822_PHYCR,
+				  DP83822_PHYCR_FORCE_MDIX |
+				  DP83822_PHYCR_MDIX_EN,
 				  0);
+		break;
 	case ETH_TP_MDI_X:
 		/* Force MDIX (crossover) - disable auto, set force */
-		return phy_modify(phydev, MII_DP83822_PHYSCR,
-				  DP83822_PHYSCR_FORCE_MDIX |
-				  DP83822_PHYSCR_MDIX_EN,
-				  DP83822_PHYSCR_FORCE_MDIX);
+		ret = phy_modify(phydev, MII_DP83822_PHYCR,
+				  DP83822_PHYCR_FORCE_MDIX |
+				  DP83822_PHYCR_MDIX_EN,
+				  DP83822_PHYCR_FORCE_MDIX);
+		break;
 	default:
-		return 0;
+		ret = 0;
+		break;
 	}
+
+	return ret;
 }
 
 static int dp83822_config_aneg(struct phy_device *phydev)
@@ -1056,26 +1067,26 @@ static int dp83826_read_straps(struct phy_device *phydev)
 		/* Auto-MDIX disabled - use forced mode */
 		if (val & BIT(10)) {
 			/* Force MDIX (crossover) */
-			phy_set_bits(phydev, MII_DP83822_PHYSCR,
-				     DP83822_PHYSCR_FORCE_MDIX);
-			phy_clear_bits(phydev, MII_DP83822_PHYSCR,
-				       DP83822_PHYSCR_MDIX_EN);
+			phy_set_bits(phydev, MII_DP83822_PHYCR,
+				     DP83822_PHYCR_FORCE_MDIX);
+			phy_clear_bits(phydev, MII_DP83822_PHYCR,
+				       DP83822_PHYCR_MDIX_EN);
 			phydev->mdix_ctrl = ETH_TP_MDI_X;
 			phydev->mdix = ETH_TP_MDI_X;
 		} else {
 			/* Force MDI (straight) */
-			phy_clear_bits(phydev, MII_DP83822_PHYSCR,
-				       DP83822_PHYSCR_FORCE_MDIX |
-				       DP83822_PHYSCR_MDIX_EN);
+			phy_clear_bits(phydev, MII_DP83822_PHYCR,
+				       DP83822_PHYCR_FORCE_MDIX |
+				       DP83822_PHYCR_MDIX_EN);
 			phydev->mdix_ctrl = ETH_TP_MDI;
 			phydev->mdix = ETH_TP_MDI;
 		}
 	} else {
 		/* Auto-MDIX enabled */
-		phy_set_bits(phydev, MII_DP83822_PHYSCR,
-			     DP83822_PHYSCR_MDIX_EN);
-		phy_clear_bits(phydev, MII_DP83822_PHYSCR,
-			       DP83822_PHYSCR_FORCE_MDIX);
+		phy_set_bits(phydev, MII_DP83822_PHYCR,
+			     DP83822_PHYCR_MDIX_EN);
+		phy_clear_bits(phydev, MII_DP83822_PHYCR,
+			       DP83822_PHYCR_FORCE_MDIX);
 		phydev->mdix_ctrl = ETH_TP_MDI_AUTO;
 		phydev->mdix = ETH_TP_MDI_INVALID;
 	}
