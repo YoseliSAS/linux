@@ -204,12 +204,11 @@ static const struct snd_pcm_hardware mcf54418_dac_pcm_hardware = {
 				  SNDRV_PCM_INFO_MMAP_VALID |
 				  SNDRV_PCM_INFO_INTERLEAVED |
 				  SNDRV_PCM_INFO_BLOCK_TRANSFER,
-	.formats		= SNDRV_PCM_FMTBIT_S16_LE |
-				  SNDRV_PCM_FMTBIT_S16_BE |
-				  SNDRV_PCM_FMTBIT_U16_LE |
-				  SNDRV_PCM_FMTBIT_U16_BE |
-				  SNDRV_PCM_FMTBIT_S8 |
-				  SNDRV_PCM_FMTBIT_U8,
+	/* DAC requires unsigned offset-binary format (0x800 = silence).
+	 * Only support U16_BE so ALSA plughw converts signed→unsigned
+	 * and little→big endian automatically.
+	 */
+	.formats		= SNDRV_PCM_FMTBIT_U16_BE,
 	.rates			= SNDRV_PCM_RATE_8000_48000,
 	.rate_min		= 8000,
 	.rate_max		= 48000,
@@ -988,23 +987,14 @@ static int mcf54418_dac_hw_params(struct snd_pcm_substream *substream,
 	dac->format = format;
 	dac->dupstream = (channels == 2);
 
-	/* Configure DAC control register(s) - initialize both DAC0 and DAC1 for stereo */
+	/* Configure DAC control register(s) - initialize both DAC0 and DAC1 for stereo
+	 * Use right-justified format (FORMAT=0) like original driver.
+	 * With U16_BE input, the upper 12 bits go to DAC via left-justified mode,
+	 * or we can use FORMAT=0 and the DAC uses bits [11:0].
+	 * Since U16_BE has MSB first, use FORMAT=1 (left-justified) to get bits [15:4].
+	 */
 	for (i = 0; i < channels; i++) {
-		cr = DAC_CR_WMLVL_2;  /* Watermark at 2 words */
-
-		/* Set data format */
-		switch (format) {
-		case SNDRV_PCM_FORMAT_S16_LE:
-		case SNDRV_PCM_FORMAT_S16_BE:
-		case SNDRV_PCM_FORMAT_U16_LE:
-		case SNDRV_PCM_FORMAT_U16_BE:
-			cr |= DAC_CR_FORMAT;  /* Left-justified for 16-bit */
-			break;
-		default:
-			cr &= ~DAC_CR_FORMAT; /* Right-justified for 8-bit */
-			break;
-		}
-
+		cr = DAC_CR_WMLVL_2 | DAC_CR_FORMAT;  /* Watermark=2, left-justified */
 		dac_writel(dac, i, DAC_CR, cr);
 		dev_info(dac->dev, "Initialized DAC%d: CR=0x%04x\n", i, cr);
 	} unsigned int timer_rate = rate * channels;
@@ -1078,12 +1068,8 @@ static struct snd_soc_dai_driver mcf54418_dac_dai = {
 		.channels_min	= 1,
 		.channels_max	= 2,  /* Stereo supported with custom TCD programming (SOFF=4) */
 		.rates		= SNDRV_PCM_RATE_8000_48000,
-		.formats	= SNDRV_PCM_FMTBIT_S16_LE |
-				  SNDRV_PCM_FMTBIT_S16_BE |
-				  SNDRV_PCM_FMTBIT_U16_LE |
-				  SNDRV_PCM_FMTBIT_U16_BE |
-				  SNDRV_PCM_FMTBIT_S8 |
-				  SNDRV_PCM_FMTBIT_U8,
+		/* DAC requires unsigned offset-binary format */
+		.formats	= SNDRV_PCM_FMTBIT_U16_BE,
 	},
 	.ops = &mcf54418_dac_dai_ops,
 };
