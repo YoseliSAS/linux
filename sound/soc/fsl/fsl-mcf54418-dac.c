@@ -685,12 +685,23 @@ static int mcf54418_dac_submit_interleaved(struct snd_pcm_substream *substream,
  */
 static int mcf54418_dac_submit_single(struct snd_pcm_substream *substream)
 {
-	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
+	struct mcf54418_dac_pcm_runtime *prtd;
 	struct dma_async_tx_descriptor *desc;
 	dma_addr_t period_addr;
 	unsigned long flags;
 	int ret;
-	unsigned int submit_period = prtd->next_submit_period;
+	unsigned int submit_period;
+
+	/* Safety check for shutdown race condition */
+	if (!substream || !substream->runtime ||
+	    !substream->runtime->private_data)
+		return -EINVAL;
+
+	prtd = substream->runtime->private_data;
+	if (!prtd->running)
+		return -EINVAL;
+
+	submit_period = prtd->next_submit_period;
 
 	/* Calculate address of period to submit */
 	period_addr = prtd->dma_addr + (submit_period * prtd->period_bytes);
@@ -847,10 +858,17 @@ static snd_pcm_uframes_t mcf54418_dac_pcm_pointer(struct snd_soc_component *comp
 static void mcf54418_dac_dma_complete(void *data)
 {
 	struct snd_pcm_substream *substream = data;
-	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
+	struct mcf54418_dac_pcm_runtime *prtd;
 	unsigned long flags;
 	int ret;
 	int completed;
+
+	/* Safety check for shutdown race condition */
+	if (!substream || !substream->runtime ||
+	    !substream->runtime->private_data)
+		return;
+
+	prtd = substream->runtime->private_data;
 
 	/* For stereo, both channels must complete before proceeding */
 	completed = atomic_inc_return(&prtd->dma_complete_count);
