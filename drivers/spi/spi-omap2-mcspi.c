@@ -1342,11 +1342,11 @@ static bool omap2_mcspi_can_dma(struct spi_controller *ctlr,
 	if (!mcspi_dma->dma_rx || !mcspi_dma->dma_tx)
 		return false;
 
-	if (spi_controller_is_target(ctlr))
-		return true;
-
 	ctlr->dma_rx = mcspi_dma->dma_rx;
 	ctlr->dma_tx = mcspi_dma->dma_tx;
+
+	if (spi_controller_is_target(ctlr))
+		return true;
 
 	return (xfer->len >= DMA_MIN_BYTES);
 }
