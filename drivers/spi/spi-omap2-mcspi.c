@@ -1487,7 +1487,14 @@ static int omap2_mcspi_probe(struct platform_device *pdev)
 	ctlr->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH;
 	ctlr->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 32);
 	ctlr->setup = omap2_mcspi_setup;
-	ctlr->auto_runtime_pm = true;
+	/*
+	 * Disable auto runtime PM in target mode. The controller must stay
+	 * awake to detect and respond to master-initiated transfers.
+	 * With auto_runtime_pm enabled, the device could autosuspend while
+	 * waiting for the master, and MCSPI_HL_SYSCONFIG.IDLEMODE=2 (smart
+	 * idle without wakeup) would prevent DMA/IRQ wakeup events.
+	 */
+	ctlr->auto_runtime_pm = !spi_controller_is_target(ctlr);
 	ctlr->prepare_message = omap2_mcspi_prepare_message;
 	ctlr->can_dma = omap2_mcspi_can_dma;
 	ctlr->transfer_one = omap2_mcspi_transfer_one;
