@@ -40,7 +40,9 @@ static struct snd_soc_dai_driver mcf54418_dac_dai = {
 		.channels_min	= 1,
 		.channels_max	= 2,
 		.rates		= SNDRV_PCM_RATE_8000_48000,
-		.formats	= SNDRV_PCM_FMTBIT_S16_LE,
+		.formats	= SNDRV_PCM_FMTBIT_S16_LE |
+				  SNDRV_PCM_FMTBIT_S16_BE |
+				  SNDRV_PCM_FMTBIT_U16_BE,
 	},
 };
 

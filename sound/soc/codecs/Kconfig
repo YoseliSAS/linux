@@ -1530,13 +1530,6 @@ config SND_SOC_PCM3168A_SPI
 config SND_SOC_PCM5102A
 	tristate "Texas Instruments PCM5102A CODEC"
 
-config SND_SOC_MCF54418_DAC
-	tristate "Freescale MCF54418 DAC CODEC"
-	depends on M68K || COMPILE_TEST
-	help
-	  Enable support for the internal 12-bit DAC codec found in
-	  Freescale/NXP MCF54418 ColdFire processors.
-
 config SND_SOC_PCM512x
 	tristate
 

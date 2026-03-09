@@ -9,6 +9,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/debugfs.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 #include <linux/gpio.h>
@@ -61,13 +62,13 @@ MODULE_PARM_DESC(board_type, "Board type: dlcnext (default) or dlcmi20");
 #define DAC_CR_UP		BIT(5)	/* Up */
 #define DAC_CR_HSLS		BIT(6)	/* High speed / Low speed */
 #define DAC_CR_DMAEN		BIT(7)	/* DMA Enable - FIXED was BIT(15), should be BIT(7) */
-#define DAC_CR_WMLVL_SHIFT	8	
+#define DAC_CR_WMLVL_SHIFT	8
 #define DAC_CR_WMLVL_MASK	(0x03 << DAC_CR_WMLVL_SHIFT)	/* Watermark Level [9:8] */
 #define DAC_CR_FILT_EN		BIT(12)	/* Filter Enable */
-#define DAC_CR_WMLVL_0		(0x00 << DAC_CR_WMLVL_SHIFT)	
-#define DAC_CR_WMLVL_2		(0x01 << DAC_CR_WMLVL_SHIFT)	
-#define DAC_CR_WMLVL_4		(0x02 << DAC_CR_WMLVL_SHIFT)	
-#define DAC_CR_WMLVL_6		(0x03 << DAC_CR_WMLVL_SHIFT)	
+#define DAC_CR_WMLVL_0		(0x00 << DAC_CR_WMLVL_SHIFT)
+#define DAC_CR_WMLVL_2		(0x01 << DAC_CR_WMLVL_SHIFT)
+#define DAC_CR_WMLVL_4		(0x02 << DAC_CR_WMLVL_SHIFT)
+#define DAC_CR_WMLVL_6		(0x03 << DAC_CR_WMLVL_SHIFT)
 
 /* DAC Status Register bits */
 #define DAC_SR_FULL		BIT(1)	/* FIFO Full */
@@ -97,7 +98,8 @@ MODULE_PARM_DESC(board_type, "Board type: dlcnext (default) or dlcmi20");
 #define DTIM_DTMR_CE_FALLING	(0x02 << 6)
 #define DTIM_DTMR_CE_ANY	(0x03 << 6)
 #define DTIM_DTMR_PS_MASK	0xFF00	/* Prescaler */
-#define DTIM_DTMR_PS_SHIFT	8 #define DTIM_DTXMR_DMAEN	BIT(7)	/* DMA request enable (vs interrupt) */
+#define DTIM_DTMR_PS_SHIFT	8
+#define DTIM_DTXMR_DMAEN	BIT(7)	/* DMA request enable (vs interrupt) */
 
 /* Timer Event Register bits (DTER) - WRITE-1-TO-CLEAR status bits!
  * Per manual page 39-6: "Writing a 1 to DTERn[REF] or DTERn[CAP] clears it"
@@ -123,6 +125,9 @@ MODULE_PARM_DESC(board_type, "Board type: dlcnext (default) or dlcmi20");
 
 #define MCF_EDMA_CHAN_DAC0	62
 #define MCF_EDMA_CHAN_DAC1	63
+
+/* Volume range: 0-8, same as original driver (REQ 05100) */
+#define DAC_VOLUME_MAX		8
 
 /*
  * GPIO pins for audio control - board-dependent
@@ -159,7 +164,9 @@ struct mcf54418_dac {
 	unsigned int sample_rate;
 	unsigned int channels;
 	snd_pcm_format_t format;
-	unsigned int volume;		/* 0-8 range */
+	unsigned int volume_dac0;	/* DAC0 volume 0-8 (REQ 05100) */
+	unsigned int volume_dac1;	/* DAC1 volume 0-8 (REQ 05100) */
+	bool dual_mono;			/* Duplicate mono to both DACs (REQ 05050) */
 
 	/* GPIO control */
 	int gpio_mute;
@@ -169,7 +176,10 @@ struct mcf54418_dac {
 
 	/* State */
 	bool enabled;
-	bool dupstream;			/* Stereo mode: DAC0 drives both */
+
+	/* Debug */
+	struct dentry *debugfs_root;
+	struct snd_pcm_substream *active_substream;
 };
 
 
@@ -179,24 +189,37 @@ struct mcf54418_dac_pcm_runtime {
 	struct dma_slave_config slave_config_left;	/* DMA config for left */
 	struct dma_slave_config slave_config_right;	/* DMA config for right */
 
-	/* Period tracking - double-buffering to avoid gaps */
+	/* Period tracking */
 	unsigned int current_period;		/* Period that just completed (for ALSA) */
-	unsigned int next_submit_period;	/* Next period to submit to DMA queue */
+	unsigned int next_source_period;	/* Next ALSA period to read */
 	unsigned int total_periods;		/* Total number of periods */
 	size_t period_bytes;			/* Size of each period in bytes */
 	dma_addr_t dma_addr;			/* DMA buffer physical address */
 	unsigned int channels;			/* 1=mono, 2=stereo */
 
 	/* DMA descriptor tracking */
-	struct dma_async_tx_descriptor *desc_left;	/* Left channel DMA descriptor */
-	struct dma_async_tx_descriptor *desc_right;	/* Right channel DMA descriptor (stereo) */
-	dma_cookie_t cookie_left;		/* Left DMA cookie */
-	dma_cookie_t cookie_right;		/* Right DMA cookie (stereo) */
+	struct dma_async_tx_descriptor *desc_left;
+	struct dma_async_tx_descriptor *desc_right;
+	dma_cookie_t cookie_left;
+	dma_cookie_t cookie_right;
 
 	/* State */
 	bool running;				/* DMA is running */
 	spinlock_t lock;			/* Protect state */
-	atomic_t dma_complete_count;		/* Track DMA completions for stereo (0-2) */
+	atomic_t dma_complete_count;		/* Track DMA completions for stereo */
+
+	/* Cyclic process buffers for volume application.
+	 * One contiguous buffer per DAC of 2 * process_buf_size.
+	 * DMA loops continuously: INT_HALF after first half,
+	 * INT_MAJOR after second half. Software refills the
+	 * half that just finished playing.
+	 */
+	void *process_buf_dac0;			/* Cyclic buffer for DAC0 */
+	void *process_buf_dac1;			/* Cyclic buffer for DAC1 */
+	dma_addr_t process_dma_dac0;		/* DMA address for DAC0 */
+	dma_addr_t process_dma_dac1;		/* DMA address for DAC1 */
+	size_t process_buf_size;		/* Size of ONE half (one period) */
+	unsigned int process_buf_idx;		/* Which half to refill (0 or 1) */
 };
 
 static const struct snd_pcm_hardware mcf54418_dac_pcm_hardware = {
@@ -204,11 +227,12 @@ static const struct snd_pcm_hardware mcf54418_dac_pcm_hardware = {
 				  SNDRV_PCM_INFO_MMAP_VALID |
 				  SNDRV_PCM_INFO_INTERLEAVED |
 				  SNDRV_PCM_INFO_BLOCK_TRANSFER,
-	/* DAC requires unsigned offset-binary format (0x800 = silence).
-	 * Only support U16_BE so ALSA plughw converts signed→unsigned
-	 * and little→big endian automatically.
+	/* Support S16_LE (wav native), S16_BE (CPU native), and U16_BE (DAC native).
+	 * The driver converts all formats to unsigned 12-bit in process_period().
 	 */
-	.formats		= SNDRV_PCM_FMTBIT_U16_BE,
+	.formats		= SNDRV_PCM_FMTBIT_S16_LE |
+				  SNDRV_PCM_FMTBIT_S16_BE |
+				  SNDRV_PCM_FMTBIT_U16_BE,
 	.rates			= SNDRV_PCM_RATE_8000_48000,
 	.rate_min		= 8000,
 	.rate_max		= 48000,
@@ -226,6 +250,7 @@ static inline void dac_writel(struct mcf54418_dac *dac, int channel,
 			      unsigned int reg, u32 val)
 {
 	void __iomem *base = channel ? dac->dac1_base : dac->dac0_base;
+
 	writew(val, base + reg);
 }
 
@@ -233,8 +258,121 @@ static inline u32 dac_readl(struct mcf54418_dac *dac, int channel,
 			    unsigned int reg)
 {
 	void __iomem *base = channel ? dac->dac1_base : dac->dac0_base;
+
 	return readw(base + reg);
-}static void mcf54418_dac_setup_ccm(struct mcf54418_dac *dac);
+}
+
+/*
+ * Apply volume to a single sample (0-8 scale, like original driver).
+ * Sample is in U16_BE offset-binary format where 0x800 = silence.
+ */
+static inline u16 mcf54418_apply_volume(u16 sample, unsigned int volume)
+{
+	int centered;
+
+	if (volume >= DAC_VOLUME_MAX)
+		return sample;
+	if (volume == 0)
+		return 0x800;  /* Silence = midpoint for offset-binary */
+
+	/* Center around 0x800, apply attenuation, recenter */
+	centered = (int)sample - 0x800;
+
+	if (volume == 7)
+		centered = (centered >> 1) + (centered >> 2);  /* 75% */
+	else
+		centered = centered >> (DAC_VOLUME_MAX - volume - 1);
+
+	return (u16)clamp(centered + 0x800, 0, 0xFFF);
+}
+
+/*
+ * Convert a raw 16-bit sample to 12-bit unsigned offset-binary for the DAC.
+ * DAC expects 12-bit values (0x000-0xFFF) where 0x800 = silence.
+ *
+ * S16_LE: byte-swap to native, then signed→unsigned, then >>4 for 12-bit.
+ * S16_BE: signed→unsigned, then >>4 for 12-bit.
+ * U16_BE: >>4 for 12-bit (already unsigned).
+ */
+static inline u16 mcf54418_to_dac12(u16 raw, snd_pcm_format_t format)
+{
+	u16 unsigned16;
+
+	switch (format) {
+	case SNDRV_PCM_FORMAT_S16_LE:
+		unsigned16 = (u16)((s16)swab16(raw) + 0x8000);
+		break;
+	case SNDRV_PCM_FORMAT_S16_BE:
+		unsigned16 = (u16)((s16)raw + 0x8000);
+		break;
+	default: /* U16_BE */
+		unsigned16 = raw;
+		break;
+	}
+	return unsigned16 >> 4;
+}
+
+/*
+ * Process a period of samples: apply per-channel volume and handle dual-mono.
+ * Source buffer is from ALSA (S16_BE or U16_BE format).
+ * Destination buffers are DMA-capable for submission to DAC0/DAC1.
+ */
+static void mcf54418_dac_process_period(struct mcf54418_dac *dac,
+					struct mcf54418_dac_pcm_runtime *prtd,
+					const void *src_buf,
+					size_t period_bytes)
+{
+	const u16 *src = src_buf;
+	snd_pcm_format_t format = dac->format;
+	size_t offset = prtd->process_buf_idx * prtd->process_buf_size;
+	u16 *dst0 = prtd->process_buf_dac0 + offset;
+	u16 *dst1 = prtd->process_buf_dac1 + offset;
+	size_t num_samples;
+	unsigned int i;
+
+	if (prtd->channels == 2 && !dac->dual_mono) {
+		/* Stereo: L->DAC0, R->DAC1 with per-channel volume */
+		num_samples = period_bytes / 4;  /* 2 bytes * 2 channels */
+		for (i = 0; i < num_samples; i++) {
+			u16 l = mcf54418_to_dac12(src[i * 2], format);
+			u16 r = mcf54418_to_dac12(src[i * 2 + 1], format);
+
+			dst0[i] = mcf54418_apply_volume(l, dac->volume_dac0);
+			dst1[i] = mcf54418_apply_volume(r, dac->volume_dac1);
+		}
+	} else if (dac->dual_mono) {
+		/* Dual-mono: same source to both DACs with different volumes */
+		if (prtd->channels == 2) {
+			/* Stereo input but dual-mono: use only left channel */
+			num_samples = period_bytes / 4;
+			for (i = 0; i < num_samples; i++) {
+				u16 s = mcf54418_to_dac12(src[i * 2], format);
+
+				dst0[i] = mcf54418_apply_volume(s, dac->volume_dac0);
+				dst1[i] = mcf54418_apply_volume(s, dac->volume_dac1);
+			}
+		} else {
+			/* Mono input: duplicate to both DACs */
+			num_samples = period_bytes / 2;
+			for (i = 0; i < num_samples; i++) {
+				u16 s = mcf54418_to_dac12(src[i], format);
+
+				dst0[i] = mcf54418_apply_volume(s, dac->volume_dac0);
+				dst1[i] = mcf54418_apply_volume(s, dac->volume_dac1);
+			}
+		}
+	} else {
+		/* Mono without dual-mono: DAC0 only */
+		num_samples = period_bytes / 2;
+		for (i = 0; i < num_samples; i++) {
+			u16 s = mcf54418_to_dac12(src[i], format);
+
+			dst0[i] = mcf54418_apply_volume(s, dac->volume_dac0);
+		}
+	}
+}
+
+static void mcf54418_dac_setup_ccm(struct mcf54418_dac *dac);
 
 static void mcf54418_dac_enable_analog_outputs(struct mcf54418_dac *dac)
 {
@@ -251,7 +389,7 @@ static void mcf54418_dac_enable_analog_outputs(struct mcf54418_dac *dac)
 static void mcf54418_dac_enable(struct mcf54418_dac *dac, bool enable)
 {
 	int i;
-	u16 cr, cr_readback;
+	u16 cr;
 
 	/* ITERATION 84: Check eDMA TCD62 registers to see if DREQ bit is set!
 	 * showed DTRR preserved correctly but IRQ 192 count=0 (no DMA requests).
@@ -286,7 +424,7 @@ static void mcf54418_dac_enable(struct mcf54418_dac *dac, bool enable)
 	for (i = 0; i < 2; i++) {
 		cr = dac_readl(dac, i, DAC_CR);
 		if (enable) {
-			cr &= ~(DAC_CR_PDN | DAC_CR_AUTO | DAC_CR_FORMAT | DAC_CR_WMLVL_MASK);
+			cr &= ~(DAC_CR_PDN | DAC_CR_AUTO | DAC_CR_WMLVL_MASK);
 			cr |= DAC_CR_DMAEN | DAC_CR_SYNC_EN | (0x02 << DAC_CR_WMLVL_SHIFT);  /* WMLVL=2 */
 			/* DON'T prime FIFO - let DMA fill it via WMLVL=2 */
 		} else {
@@ -294,7 +432,6 @@ static void mcf54418_dac_enable(struct mcf54418_dac *dac, bool enable)
 			cr &= ~(DAC_CR_DMAEN | DAC_CR_SYNC_EN);
 		}
 		dac_writel(dac, i, DAC_CR, cr);
-		cr_readback = dac_readl(dac, i, DAC_CR);
 	}
 
 	if (enable) {
@@ -374,7 +511,8 @@ static void mcf54418_dac_setup_ccm(struct mcf54418_dac *dac)
 static bool mcf54418_dac_dma_filter(struct dma_chan *chan, void *param)
 {
 	unsigned long requested_chan = (unsigned long)param;
-	return (chan->chan_id == requested_chan);
+
+	return chan->chan_id == requested_chan;
 }
 
 /* Custom compat_request_channel that doesn't depend on dma_data being set */
@@ -496,6 +634,15 @@ static int mcf54418_dac_pcm_open(struct snd_soc_component *component,
 	/* Set PCM hardware constraints */
 	snd_soc_set_runtime_hwparams(substream, &mcf54418_dac_pcm_hardware);
 
+	/* Store active substream for debugfs access */
+	{
+		struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+		struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+		struct mcf54418_dac *dac = snd_soc_dai_get_drvdata(cpu_dai);
+
+		dac->active_substream = substream;
+	}
+
 	return 0;
 
 err_free_prtd:
@@ -507,17 +654,32 @@ static int mcf54418_dac_pcm_close(struct snd_soc_component *component,
 				  struct snd_pcm_substream *substream)
 {
 	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
+	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
+
+	dac->active_substream = NULL;
+
 	if (prtd) {
 		/* Release left channel (always allocated) */
 		if (prtd->dma_chan_left) {
 			dmaengine_terminate_sync(prtd->dma_chan_left);
 			dma_release_channel(prtd->dma_chan_left);
 		}
-		/* Release right channel (only if stereo) */
+		/* Release right channel (stereo or dual-mono) */
 		if (prtd->dma_chan_right) {
 			dmaengine_terminate_sync(prtd->dma_chan_right);
 			dma_release_channel(prtd->dma_chan_right);
 		}
+		/* Free cyclic processing buffers (2 * process_buf_size each) */
+		if (prtd->process_buf_dac0)
+			dma_free_coherent(component->dev,
+					  2 * prtd->process_buf_size,
+					  prtd->process_buf_dac0,
+					  prtd->process_dma_dac0);
+		if (prtd->process_buf_dac1)
+			dma_free_coherent(component->dev,
+					  2 * prtd->process_buf_size,
+					  prtd->process_buf_dac1,
+					  prtd->process_dma_dac1);
 		kfree(prtd);
 	}
 
@@ -529,16 +691,22 @@ static int mcf54418_dac_pcm_hw_params(struct snd_soc_component *component,
 				      struct snd_pcm_hw_params *params)
 {
 	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
+	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
 	size_t period_bytes = params_period_bytes(params);
 	unsigned int periods = params_periods(params);
 	unsigned int channels = params_channels(params);
+	size_t process_buf_size;
+	bool need_dac1;
 	int ret;
 
 	/* Save channel count */
 	prtd->channels = channels;
 
-	/* Allocate right channel DMA if stereo */
-	if (channels == 2 && !prtd->dma_chan_right) {
+	/* Need DAC1 if stereo OR if dual-mono mode is enabled */
+	need_dac1 = (channels == 2) || dac->dual_mono;
+
+	/* Allocate right channel DMA if needed */
+	if (need_dac1 && !prtd->dma_chan_right) {
 		struct dma_chan *chan;
 
 		chan = snd_dmaengine_pcm_request_channel(mcf54418_dac_dma_filter,
@@ -549,8 +717,9 @@ static int mcf54418_dac_pcm_hw_params(struct snd_soc_component *component,
 			return PTR_ERR(chan);
 		}
 		prtd->dma_chan_right = chan;
-		dev_info(component->dev, "Stereo mode: allocated DMA channel %d for DAC1\n",
-			 MCF_EDMA_CHAN_DAC1);
+		dev_info(component->dev, "Allocated DMA channel %d for DAC1 (%s)\n",
+			 MCF_EDMA_CHAN_DAC1,
+			 dac->dual_mono ? "dual-mono" : "stereo");
 	}
 
 	/* Configure left channel DMA (DAC0) */
@@ -566,8 +735,8 @@ static int mcf54418_dac_pcm_hw_params(struct snd_soc_component *component,
 		return ret;
 	}
 
-	/* Configure right channel DMA (DAC1) if stereo */
-	if (channels == 2) {
+	/* Configure right channel DMA (DAC1) if needed */
+	if (need_dac1) {
 		memset(&prtd->slave_config_right, 0, sizeof(prtd->slave_config_right));
 		prtd->slave_config_right.direction = DMA_MEM_TO_DEV;
 		prtd->slave_config_right.dst_addr = 0xFC09C002;  /* DAC1 VDACR */
@@ -581,14 +750,66 @@ static int mcf54418_dac_pcm_hw_params(struct snd_soc_component *component,
 		}
 	}
 
+	/* Allocate cyclic processing buffers for volume application.
+	 * Each buffer is 2 * process_buf_size (two halves for cyclic DMA).
+	 * DMA loops over the whole buffer; INT_HALF/INT_MAJOR tell us
+	 * which half to refill.
+	 * For stereo: process_buf_size = period_bytes/2 (deinterleaved).
+	 * For mono: process_buf_size = period_bytes.
+	 */
+	process_buf_size = (channels == 2) ? period_bytes / 2 : period_bytes;
+
+	/* Free old buffers if size changed */
+	if (prtd->process_buf_dac0 && prtd->process_buf_size != process_buf_size) {
+		dma_free_coherent(component->dev, 2 * prtd->process_buf_size,
+				  prtd->process_buf_dac0, prtd->process_dma_dac0);
+		prtd->process_buf_dac0 = NULL;
+	}
+	if (prtd->process_buf_dac1 && prtd->process_buf_size != process_buf_size) {
+		dma_free_coherent(component->dev, 2 * prtd->process_buf_size,
+				  prtd->process_buf_dac1, prtd->process_dma_dac1);
+		prtd->process_buf_dac1 = NULL;
+	}
+
+	/* Allocate DAC0 cyclic buffer (2 halves) */
+	if (!prtd->process_buf_dac0) {
+		prtd->process_buf_dac0 = dma_alloc_coherent(component->dev,
+							    2 * process_buf_size,
+							    &prtd->process_dma_dac0,
+							    GFP_KERNEL);
+		if (!prtd->process_buf_dac0) {
+			dev_err(component->dev, "Failed to allocate DAC0 cyclic buffer\n");
+			return -ENOMEM;
+		}
+	}
+
+	/* Allocate DAC1 cyclic buffer if needed */
+	if (need_dac1 && !prtd->process_buf_dac1) {
+		prtd->process_buf_dac1 = dma_alloc_coherent(component->dev,
+							    2 * process_buf_size,
+							    &prtd->process_dma_dac1,
+							    GFP_KERNEL);
+		if (!prtd->process_buf_dac1) {
+			dev_err(component->dev, "Failed to allocate DAC1 cyclic buffer\n");
+			dma_free_coherent(component->dev, 2 * process_buf_size,
+					  prtd->process_buf_dac0,
+					  prtd->process_dma_dac0);
+			prtd->process_buf_dac0 = NULL;
+			return -ENOMEM;
+		}
+	}
+
+	prtd->process_buf_size = process_buf_size;
+	prtd->process_buf_idx = 0;
+
 	/* Save period info */
 	prtd->period_bytes = period_bytes;
 	prtd->total_periods = periods;
 	prtd->current_period = 0;
 	prtd->dma_addr = substream->runtime->dma_addr;
 
-	dev_info(component->dev, "PCM configured: %d channels, period=%zu bytes, periods=%u\n",
-		 channels, period_bytes, periods);
+	dev_info(component->dev, "PCM configured: %d ch, period=%zu, buf_size=%zu, dual_mono=%d\n",
+		 channels, period_bytes, process_buf_size, dac->dual_mono);
 
 	return 0;
 }
@@ -596,180 +817,34 @@ static int mcf54418_dac_pcm_hw_params(struct snd_soc_component *component,
 /* Forward declarations */
 static void mcf54418_dac_dma_complete(void *data);
 
-/*
- * Submit interleaved DMA transfer for stereo playback.
- *
- * Stereo audio data is interleaved as [L0][R0][L1][R1]... where each sample
- * is 2 bytes. To send left samples to DAC0 and right samples to DAC1, we use
- * the interleaved DMA API with source inter-chunk gaps (ICG):
- *
- * Left channel:  src_start=period_addr,   src_icg=2 (skip right sample)
- * Right channel: src_start=period_addr+2, src_icg=2 (skip left sample)
- *
- * This results in TCD SOFF=4 (nbytes + src_icg = 2 + 2), which steps through
- * the interleaved buffer correctly.
+/* Start cyclic DMA for one DAC channel.
+ * The DMA loops over the process buffer (2 halves) using a single TCD
+ * with SLAST auto-wrap + INT_HALF/INT_MAJOR. No gaps between periods.
  */
-static int mcf54418_dac_submit_interleaved(struct snd_pcm_substream *substream,
-					   struct dma_chan *chan,
-					   dma_addr_t src_addr, dma_addr_t dst_addr,
-					   unsigned int num_samples)
+static int mcf54418_dac_start_cyclic(struct snd_pcm_substream *substream,
+				     struct dma_chan *chan,
+				     dma_addr_t buf_addr, size_t half_size,
+				     struct dma_async_tx_descriptor **out_desc,
+				     dma_cookie_t *out_cookie)
 {
-	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
-	struct dma_interleaved_template *xt;
 	struct dma_async_tx_descriptor *desc;
-	unsigned long flags;
-	dma_cookie_t cookie;
 
-
-	/* Allocate interleaved template with 1 chunk.
-	 * Use GFP_ATOMIC because this is called from trigger and DMA completion
-	 * callbacks which may be in atomic/interrupt context.
-	 */
-	xt = kzalloc(sizeof(*xt) + sizeof(struct data_chunk), GFP_ATOMIC);
-	if (!xt)
+	desc = dmaengine_prep_dma_cyclic(chan, buf_addr,
+					 2 * half_size, half_size,
+					 DMA_MEM_TO_DEV,
+					 DMA_PREP_INTERRUPT);
+	if (!desc)
 		return -ENOMEM;
 
-	/* Configure interleaved transfer */
-	xt->src_start = src_addr;
-	xt->dst_start = dst_addr;
-	xt->dir = DMA_MEM_TO_DEV;
-	xt->src_inc = true;		/* Increment source address */
-	xt->dst_inc = false;		/* Fixed device address */
-	xt->src_sgl = true;		/* Source is scattered (has gaps) */
-	xt->dst_sgl = false;		/* Destination is contiguous (device) */
-	xt->numf = num_samples;		/* Number of frames (samples) */
-	xt->frame_size = 1;		/* One chunk per frame */
-
-	/* Configure chunk: 2 bytes per sample, 2 byte gap (other channel) */
-	xt->sgl[0].size = 2;		/* 16-bit sample */
-	xt->sgl[0].icg = 0;		/* No general ICG */
-	xt->sgl[0].src_icg = 2;		/* Skip 2 bytes (other channel's sample) */
-	xt->sgl[0].dst_icg = 0;		/* No destination gap (fixed address) */
-
-	/* Prepare interleaved DMA descriptor */
-	desc = dmaengine_prep_interleaved_dma(chan, xt,
-					      DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	kfree(xt);  /* Template can be freed after prep */
-
-	if (!desc) {
-		dev_err(substream->pcm->card->dev,
-			"Failed to prep interleaved DMA (chan=%d)\n",
-			chan->chan_id);
-		return -ENOMEM;
-	}
-
-
-	/* Set completion callback */
 	desc->callback = mcf54418_dac_dma_complete;
 	desc->callback_param = substream;
 
-	/* Submit descriptor */
-	spin_lock_irqsave(&prtd->lock, flags);
-	cookie = dmaengine_submit(desc);
-	spin_unlock_irqrestore(&prtd->lock, flags);
-
-	if (dma_submit_error(cookie)) {
-		dev_err(substream->pcm->card->dev,
-			"Failed to submit interleaved DMA: %d\n", cookie);
+	*out_desc = desc;
+	*out_cookie = dmaengine_submit(desc);
+	if (dma_submit_error(*out_cookie))
 		return -EIO;
-	}
 
-	return 0;
-}
-
-/* DMA Mode 0: Single period submission
- * Uses next_submit_period to track which period to submit next.
- * This enables double-buffering: we can have multiple periods queued
- * so there's no gap when one completes.
- */
-static int mcf54418_dac_submit_single(struct snd_pcm_substream *substream)
-{
-	struct mcf54418_dac_pcm_runtime *prtd;
-	struct dma_async_tx_descriptor *desc;
-	dma_addr_t period_addr;
-	unsigned long flags;
-	int ret;
-	unsigned int submit_period;
-
-	/* Safety check for shutdown race condition */
-	if (!substream || !substream->runtime ||
-	    !substream->runtime->private_data)
-		return -EINVAL;
-
-	prtd = substream->runtime->private_data;
-	if (!prtd->running)
-		return -EINVAL;
-
-	submit_period = prtd->next_submit_period;
-
-	/* Calculate address of period to submit */
-	period_addr = prtd->dma_addr + (submit_period * prtd->period_bytes);
-
-	/* Advance next_submit_period for next call */
-	prtd->next_submit_period = (submit_period + 1) % prtd->total_periods;
-
-	if (prtd->channels == 2) {
-		/*
-		 * Stereo mode: Use interleaved DMA API.
-		 * Buffer contains interleaved [L0][R0][L1][R1]... samples.
-		 * Each sample is 2 bytes (16-bit).
-		 * Number of samples per channel = period_bytes / 4 (2 bytes * 2 channels)
-		 */
-		unsigned int samples_per_channel = prtd->period_bytes / 4;
-
-		/* Submit left channel: starts at period_addr */
-		ret = mcf54418_dac_submit_interleaved(substream,
-						      prtd->dma_chan_left,
-						      period_addr,
-						      0xFC098002,  /* DAC0 */
-						      samples_per_channel);
-		if (ret)
-			return ret;
-
-		/* Submit right channel: starts at period_addr + 2 (first right sample) */
-		ret = mcf54418_dac_submit_interleaved(substream,
-						      prtd->dma_chan_right,
-						      period_addr + 2,
-						      0xFC09C002,  /* DAC1 */
-						      samples_per_channel);
-		if (ret)
-			return ret;
-
-		/* Start both DMA engines */
-		dma_async_issue_pending(prtd->dma_chan_left);
-		dma_async_issue_pending(prtd->dma_chan_right);
-	} else {
-		/*
-		 * Mono mode: Use simple slave_single transfer.
-		 * All samples go to DAC0.
-		 */
-		desc = dmaengine_prep_slave_single(prtd->dma_chan_left, period_addr,
-						   prtd->period_bytes, DMA_MEM_TO_DEV,
-						   DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-		if (!desc) {
-			dev_err(substream->pcm->card->dev,
-				"Failed to prep mono DMA for period %u\n",
-				prtd->current_period);
-			return -ENOMEM;
-		}
-
-		desc->callback = mcf54418_dac_dma_complete;
-		desc->callback_param = substream;
-
-		spin_lock_irqsave(&prtd->lock, flags);
-		prtd->desc_left = desc;
-		prtd->cookie_left = dmaengine_submit(desc);
-		spin_unlock_irqrestore(&prtd->lock, flags);
-
-		if (dma_submit_error(prtd->cookie_left)) {
-			dev_err(substream->pcm->card->dev,
-				"Failed to submit mono DMA: %d\n", prtd->cookie_left);
-			return -EIO;
-		}
-
-		dma_async_issue_pending(prtd->dma_chan_left);
-	}
-
+	dma_async_issue_pending(chan);
 	return 0;
 }
 
@@ -778,38 +853,71 @@ static int mcf54418_dac_pcm_trigger(struct snd_soc_component *component,
 				    struct snd_pcm_substream *substream, int cmd)
 {
 	struct mcf54418_dac_pcm_runtime *prtd = substream->runtime->private_data;
+	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
 	unsigned long flags;
-	int ret = 0;
+	const void *src;
+	bool need_dac1;
+	int ret;
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+		need_dac1 = (prtd->channels == 2) || dac->dual_mono;
+
 		spin_lock_irqsave(&prtd->lock, flags);
 		prtd->current_period = 0;
-		prtd->next_submit_period = 0;  /* Start submitting from period 0 */
+		prtd->next_source_period = 0;
+		prtd->process_buf_idx = 0;
 		prtd->running = true;
-		atomic_set(&prtd->dma_complete_count, 0);  /* Reset completion counter */
+		atomic_set(&prtd->dma_complete_count, 0);
 		spin_unlock_irqrestore(&prtd->lock, flags);
 
-		/* NOTE: With trigger_start = SND_SOC_TRIGGER_ORDER_LDC, ASoC calls
-		 * DAI trigger (which starts DTIM3) BEFORE this component trigger.
-		 * So DTIM3 is already running when we get here.
-		 */
+		/* Fill both halves of the cyclic buffer with first 2 periods */
+		src = substream->runtime->dma_area;
+		prtd->process_buf_idx = 0;
+		mcf54418_dac_process_period(dac, prtd, src, prtd->period_bytes);
 
-		/* Double-buffering: submit 2 periods upfront to avoid gaps.
-		 * When period 0 completes, period 1 starts immediately.
-		 * The completion callback then submits period 2, etc.
-		 */
-		ret = mcf54418_dac_submit_single(substream);  /* Submit period 0 */
+		src = substream->runtime->dma_area + prtd->period_bytes;
+		prtd->process_buf_idx = 1;
+		mcf54418_dac_process_period(dac, prtd, src, prtd->period_bytes);
+
+		/* Next source period to read when a half completes */
+		prtd->next_source_period = 2 % prtd->total_periods;
+		prtd->process_buf_idx = 0;
+
+		/* Start cyclic DMA on DAC0 */
+		ret = mcf54418_dac_start_cyclic(substream,
+						prtd->dma_chan_left,
+						prtd->process_dma_dac0,
+						prtd->process_buf_size,
+						&prtd->desc_left,
+						&prtd->cookie_left);
 		if (ret) {
+			dev_err(component->dev,
+				"Failed to start DAC0 cyclic DMA: %d\n", ret);
 			prtd->running = false;
 			return ret;
 		}
-		ret = mcf54418_dac_submit_single(substream);  /* Submit period 1 */
-		if (ret)
-			prtd->running = false;
-		return ret;
+
+		/* Start cyclic DMA on DAC1 if needed */
+		if (need_dac1 && prtd->dma_chan_right) {
+			ret = mcf54418_dac_start_cyclic(substream,
+							prtd->dma_chan_right,
+							prtd->process_dma_dac1,
+							prtd->process_buf_size,
+							&prtd->desc_right,
+							&prtd->cookie_right);
+			if (ret) {
+				dev_err(component->dev,
+					"Failed to start DAC1 cyclic DMA: %d\n", ret);
+				dmaengine_terminate_sync(prtd->dma_chan_left);
+				prtd->running = false;
+				return ret;
+			}
+		}
+
+		return 0;
 
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
@@ -818,15 +926,9 @@ static int mcf54418_dac_pcm_trigger(struct snd_soc_component *component,
 		prtd->running = false;
 		spin_unlock_irqrestore(&prtd->lock, flags);
 
-		/* Stop DMA - use sync to ensure clean state before restart */
 		dmaengine_terminate_sync(prtd->dma_chan_left);
-		if (prtd->dma_chan_right) {
+		if (prtd->dma_chan_right)
 			dmaengine_terminate_sync(prtd->dma_chan_right);
-		}
-
-		/* NOTE: With trigger_start = SND_SOC_TRIGGER_ORDER_LDC, ASoC
-		 * handles DAI trigger STOP after this component trigger.
-		 */
 
 		return 0;
 
@@ -854,62 +956,72 @@ static snd_pcm_uframes_t mcf54418_dac_pcm_pointer(struct snd_soc_component *comp
 
 
 
+/* Cyclic DMA callback.
+ * Called at INT_HALF (first half played) and INT_MAJOR (second half played).
+ * Refills the half that just finished with the next source period.
+ * DMA never stops — it loops continuously over the process buffer.
+ */
 static void mcf54418_dac_dma_complete(void *data)
 {
 	struct snd_pcm_substream *substream = data;
+	struct snd_soc_pcm_runtime *rtd;
+	struct snd_soc_dai *cpu_dai;
+	struct mcf54418_dac *dac;
 	struct mcf54418_dac_pcm_runtime *prtd;
 	unsigned long flags;
-	int ret;
 	int completed;
+	int expected_callbacks;
+	const void *src;
 
-	/* Safety check for shutdown race condition */
 	if (!substream || !substream->runtime ||
 	    !substream->runtime->private_data)
 		return;
 
 	prtd = substream->runtime->private_data;
 
-	/* For stereo, both channels must complete before proceeding */
+	rtd = snd_soc_substream_to_rtd(substream);
+	cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	dac = snd_soc_dai_get_drvdata(cpu_dai);
+
+	/* For stereo/dual-mono: wait for both DAC channels */
+	expected_callbacks = ((prtd->channels == 2) || dac->dual_mono) ? 2 : 1;
 	completed = atomic_inc_return(&prtd->dma_complete_count);
-
-	/* For mono: completed==1, proceed
-	 * For stereo: only proceed when completed==2 (both channels done)
-	 */
-	if (completed < prtd->channels) {
-		return;  /* Wait for other channel */
-	}
-
-	/* Reset counter for next period */
+	if (completed < expected_callbacks)
+		return;
 	atomic_set(&prtd->dma_complete_count, 0);
 
 	spin_lock_irqsave(&prtd->lock, flags);
-
 	if (!prtd->running) {
 		spin_unlock_irqrestore(&prtd->lock, flags);
 		return;
 	}
 
-	/* Advance to next period */
+	/* Advance ALSA period pointer */
 	prtd->current_period++;
-	if (prtd->current_period >= prtd->total_periods) {
+	if (prtd->current_period >= prtd->total_periods)
 		prtd->current_period = 0;
-	}
 
 	spin_unlock_irqrestore(&prtd->lock, flags);
 
-	/* Notify ALSA that period elapsed */
+	/* Notify ALSA that a period elapsed */
 	snd_pcm_period_elapsed(substream);
 
-	/* Submit next period */
-	ret = mcf54418_dac_submit_single(substream);
-	if (ret) {
-		dev_err(substream->pcm->card->dev,
-			"Failed to submit next period: %d\n", ret);
-		prtd->running = false;
-	}
-}
+	if (!prtd->running)
+		return;
 
-/* SG mode completion callback - called after 4 periods complete */
+	/* Refill the half that just finished playing with next source period.
+	 * process_buf_idx indicates which half to refill.
+	 */
+	src = substream->runtime->dma_area +
+	      (prtd->next_source_period * prtd->period_bytes);
+
+	mcf54418_dac_process_period(dac, prtd, src, prtd->period_bytes);
+
+	/* Advance to next source period and flip half index */
+	prtd->next_source_period =
+		(prtd->next_source_period + 1) % prtd->total_periods;
+	prtd->process_buf_idx ^= 1;
+}
 
 
 static int mcf54418_dac_pcm_construct(struct snd_soc_component *component,
@@ -917,17 +1029,9 @@ static int mcf54418_dac_pcm_construct(struct snd_soc_component *component,
 {
 	struct snd_pcm *pcm = rtd->pcm;
 	size_t size = mcf54418_dac_pcm_hardware.buffer_bytes_max;
-	int ret;
-	ret = snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
+
+	return snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
 					      component->dev, size, size);
-
-	
-	if (ret == 0 && pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream) {
-		struct snd_pcm_substream *substream = pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream;
-		if (substream->dma_buffer.addr) {		}
-	}
-
-	return ret;
 }
 
 /* Custom PCM component driver with trigger ordering
@@ -958,7 +1062,7 @@ static const struct snd_soc_component_driver mcf54418_dac_custom_pcm_component =
 	.trigger		= mcf54418_dac_pcm_trigger,
 	.pointer		= mcf54418_dac_pcm_pointer,
 	.pcm_construct		= mcf54418_dac_pcm_construct,
-	
+
 	.trigger_start		= SND_SOC_TRIGGER_ORDER_LDC,
 };
 
@@ -985,20 +1089,18 @@ static int mcf54418_dac_hw_params(struct snd_pcm_substream *substream,
 	dac->sample_rate = rate;
 	dac->channels = channels;
 	dac->format = format;
-	dac->dupstream = (channels == 2);
 
 	/* Configure DAC control register(s) - initialize both DAC0 and DAC1 for stereo
 	 * Use right-justified format (FORMAT=0) like original driver.
-	 * With U16_BE input, the upper 12 bits go to DAC via left-justified mode,
-	 * or we can use FORMAT=0 and the DAC uses bits [11:0].
-	 * Since U16_BE has MSB first, use FORMAT=1 (left-justified) to get bits [15:4].
+	 * DAC uses bits [11:0] of the 16-bit data register.
 	 */
 	for (i = 0; i < channels; i++) {
-		cr = DAC_CR_WMLVL_2 | DAC_CR_FORMAT;  /* Watermark=2, left-justified */
+		cr = DAC_CR_WMLVL_2;  /* Watermark=2, right-justified (FORMAT=0) */
 		dac_writel(dac, i, DAC_CR, cr);
 		dev_info(dac->dev, "Initialized DAC%d: CR=0x%04x\n", i, cr);
-	} unsigned int timer_rate = rate * channels;
-	mcf54418_dac_setup_timer(dac, timer_rate);
+	}
+
+	mcf54418_dac_setup_timer(dac, rate);
 
 	return 0;
 }
@@ -1068,47 +1170,101 @@ static struct snd_soc_dai_driver mcf54418_dac_dai = {
 		.channels_min	= 1,
 		.channels_max	= 2,  /* Stereo supported with custom TCD programming (SOFF=4) */
 		.rates		= SNDRV_PCM_RATE_8000_48000,
-		/* DAC requires unsigned offset-binary format */
-		.formats	= SNDRV_PCM_FMTBIT_U16_BE,
+		.formats	= SNDRV_PCM_FMTBIT_S16_LE |
+				  SNDRV_PCM_FMTBIT_S16_BE |
+				  SNDRV_PCM_FMTBIT_U16_BE,
 	},
 	.ops = &mcf54418_dac_dai_ops,
 };
 
-/* Volume control */
+/* Per-channel volume controls (REQ 05100) */
 static int mcf54418_dac_volume_info(struct snd_kcontrol *kcontrol,
 				    struct snd_ctl_elem_info *uinfo)
 {
 	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 	uinfo->count = 1;
 	uinfo->value.integer.min = 0;
-	uinfo->value.integer.max = 8;
+	uinfo->value.integer.max = DAC_VOLUME_MAX;
 	return 0;
 }
 
-static int mcf54418_dac_volume_get(struct snd_kcontrol *kcontrol,
-				   struct snd_ctl_elem_value *ucontrol)
+static int mcf54418_dac0_volume_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
 	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
 
-	ucontrol->value.integer.value[0] = dac->volume;
+	ucontrol->value.integer.value[0] = dac->volume_dac0;
 	return 0;
 }
 
-static int mcf54418_dac_volume_put(struct snd_kcontrol *kcontrol,
-				   struct snd_ctl_elem_value *ucontrol)
+static int mcf54418_dac0_volume_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
 	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
 	unsigned int vol = ucontrol->value.integer.value[0];
 
-	if (vol > 8)
+	if (vol > DAC_VOLUME_MAX)
 		return -EINVAL;
 
-	if (dac->volume == vol)
+	if (dac->volume_dac0 == vol)
 		return 0;
 
-	dac->volume = vol;
+	dac->volume_dac0 = vol;
+	return 1;
+}
+
+static int mcf54418_dac1_volume_get(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
+
+	ucontrol->value.integer.value[0] = dac->volume_dac1;
+	return 0;
+}
+
+static int mcf54418_dac1_volume_put(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
+	unsigned int vol = ucontrol->value.integer.value[0];
+
+	if (vol > DAC_VOLUME_MAX)
+		return -EINVAL;
+
+	if (dac->volume_dac1 == vol)
+		return 0;
+
+	dac->volume_dac1 = vol;
+	return 1;
+}
+
+/* Dual Mono Switch (REQ 05050) */
+static int mcf54418_dac_dual_mono_get(struct snd_kcontrol *kcontrol,
+				      struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
+
+	ucontrol->value.integer.value[0] = dac->dual_mono ? 1 : 0;
+	return 0;
+}
+
+static int mcf54418_dac_dual_mono_put(struct snd_kcontrol *kcontrol,
+				      struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct mcf54418_dac *dac = snd_soc_component_get_drvdata(component);
+	bool enable = ucontrol->value.integer.value[0] != 0;
+
+	if (dac->dual_mono == enable)
+		return 0;
+
+	dac->dual_mono = enable;
+	dev_info(dac->dev, "Dual mono mode %s\n", enable ? "enabled" : "disabled");
 	return 1;
 }
 
@@ -1185,10 +1341,24 @@ static int mcf54418_dac_amp_power_put(struct snd_kcontrol *kcontrol,
 static const struct snd_kcontrol_new mcf54418_dac_controls[] = {
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-		.name = "Playback Volume",
+		.name = "DAC0 Playback Volume",
 		.info = mcf54418_dac_volume_info,
-		.get = mcf54418_dac_volume_get,
-		.put = mcf54418_dac_volume_put,
+		.get = mcf54418_dac0_volume_get,
+		.put = mcf54418_dac0_volume_put,
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "DAC1 Playback Volume",
+		.info = mcf54418_dac_volume_info,
+		.get = mcf54418_dac1_volume_get,
+		.put = mcf54418_dac1_volume_put,
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Dual Mono Switch",
+		.info = snd_ctl_boolean_mono_info,
+		.get = mcf54418_dac_dual_mono_get,
+		.put = mcf54418_dac_dual_mono_put,
 	},
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
@@ -1216,7 +1386,7 @@ static const struct snd_soc_component_driver mcf54418_dac_component = {
 	.name			= "mcf54418-dac",
 	.controls		= mcf54418_dac_controls,
 	.num_controls		= ARRAY_SIZE(mcf54418_dac_controls),
-	
+
 	.open			= mcf54418_dac_pcm_open,
 	.close			= mcf54418_dac_pcm_close,
 	.hw_params		= mcf54418_dac_pcm_hw_params,
@@ -1225,11 +1395,530 @@ static const struct snd_soc_component_driver mcf54418_dac_component = {
 	.pcm_construct		= mcf54418_dac_pcm_construct,
 };
 
+/* ============================================================
+ * debugfs interface for DAC debug and verification
+ * ============================================================
+ */
+
+#ifdef CONFIG_DEBUG_FS
+
+#define DAC_DEBUGFS_SNAPSHOT_SAMPLES	32
+
+static int dac_state_show(struct seq_file *s, void *data)
+{
+	struct mcf54418_dac *dac = s->private;
+	struct snd_pcm_substream *substream;
+	struct mcf54418_dac_pcm_runtime *prtd = NULL;
+	u16 cr0, cr1, sr0, sr1;
+	u16 dtmr, dtrr_lo, dtrr_hi, dtcn_lo, dtcn_hi;
+	u32 dtrr, dtcn;
+	u16 dactsr, misccr2;
+
+	/* DAC registers */
+	cr0 = dac_readl(dac, 0, DAC_CR);
+	cr1 = dac_readl(dac, 1, DAC_CR);
+	sr0 = dac_readl(dac, 0, DAC_SR);
+	sr1 = dac_readl(dac, 1, DAC_SR);
+
+	/* Timer registers */
+	dtmr = readw(dac->dtim_base + DTIM_DTMR);
+	dtrr = readl(dac->dtim_base + DTIM_DTRR);
+	dtcn = readl(dac->dtim_base + DTIM_DTCN);
+
+	/* CCM registers */
+	dactsr = readw(dac->ccm_base + CCM_DACTSR);
+	misccr2 = readw(dac->ccm_base + CCM_MISCCR2);
+
+	seq_puts(s, "=== MCF54418 DAC State ===\n\n");
+
+	/* DAC registers */
+	seq_printf(s, "DAC0 CR:  0x%04x  [PDN=%d DMAEN=%d SYNC=%d FMT=%d WMLVL=%d]\n",
+		   cr0, !!(cr0 & DAC_CR_PDN), !!(cr0 & DAC_CR_DMAEN),
+		   !!(cr0 & DAC_CR_SYNC_EN), !!(cr0 & DAC_CR_FORMAT),
+		   (cr0 & DAC_CR_WMLVL_MASK) >> DAC_CR_WMLVL_SHIFT);
+	seq_printf(s, "DAC1 CR:  0x%04x  [PDN=%d DMAEN=%d SYNC=%d FMT=%d WMLVL=%d]\n",
+		   cr1, !!(cr1 & DAC_CR_PDN), !!(cr1 & DAC_CR_DMAEN),
+		   !!(cr1 & DAC_CR_SYNC_EN), !!(cr1 & DAC_CR_FORMAT),
+		   (cr1 & DAC_CR_WMLVL_MASK) >> DAC_CR_WMLVL_SHIFT);
+	seq_printf(s, "DAC0 SR:  0x%04x  [FULL=%d EMPTY=%d]\n",
+		   sr0, !!(sr0 & DAC_SR_FULL), !!(sr0 & DAC_SR_EMPTY));
+	seq_printf(s, "DAC1 SR:  0x%04x  [FULL=%d EMPTY=%d]\n",
+		   sr1, !!(sr1 & DAC_SR_FULL), !!(sr1 & DAC_SR_EMPTY));
+	seq_putc(s, '\n');
+
+	/* Timer */
+	seq_printf(s, "DTIM3 DTMR: 0x%04x  [RST=%d CLK=%d FRR=%d ORRI=%d OM=%d]\n",
+		   dtmr, !!(dtmr & DTIM_DTMR_RST),
+		   (dtmr >> 1) & 0x03, !!(dtmr & DTIM_DTMR_FRR),
+		   !!(dtmr & DTIM_DTMR_ORRI), !!(dtmr & DTIM_DTMR_OM));
+	seq_printf(s, "DTIM3 DTRR: 0x%08x (%u)\n", dtrr, dtrr);
+	seq_printf(s, "DTIM3 DTCN: 0x%08x (%u)\n", dtcn, dtcn);
+	if (dac->sample_rate && dac->bus_clk_rate) {
+		u32 expected = dac->bus_clk_rate / dac->sample_rate;
+		seq_printf(s, "Expected DTRR: %u (bus_clk=%u / rate=%u)\n",
+			   expected, dac->bus_clk_rate, dac->sample_rate);
+	}
+	seq_putc(s, '\n');
+
+	/* CCM */
+	seq_printf(s, "CCM DACTSR:  0x%04x  [DAC0: ch=%d src=%d | DAC1: ch=%d src=%d]\n",
+		   dactsr,
+		   (dactsr >> 3) & 0x03, dactsr & 0x07,
+		   (dactsr >> 11) & 0x03, (dactsr >> 8) & 0x07);
+	seq_printf(s, "CCM MISCCR2: 0x%04x  [DAC0SEL=%d DAC1SEL=%d]\n",
+		   misccr2, !!(misccr2 & CCM_MISCCR2_DAC0SEL),
+		   !!(misccr2 & CCM_MISCCR2_DAC1SEL));
+	seq_putc(s, '\n');
+
+	/* Volume & audio config */
+	seq_printf(s, "Volume DAC0: %u/%u\n", dac->volume_dac0, DAC_VOLUME_MAX);
+	seq_printf(s, "Volume DAC1: %u/%u\n", dac->volume_dac1, DAC_VOLUME_MAX);
+	seq_printf(s, "Sample rate: %u Hz\n", dac->sample_rate);
+	seq_printf(s, "Channels:    %u\n", dac->channels);
+	seq_printf(s, "Format:      %d\n", dac->format);
+	seq_printf(s, "Dual mono:   %s\n", dac->dual_mono ? "yes" : "no");
+	seq_printf(s, "Enabled:     %s\n", dac->enabled ? "yes" : "no");
+	seq_putc(s, '\n');
+
+	/* GPIO state */
+	seq_printf(s, "GPIO mute:     %d (pin %d, inverted=%d)\n",
+		   gpio_get_value(dac->gpio_mute), dac->gpio_mute,
+		   dac->mute_inverted);
+	seq_printf(s, "GPIO shutdown: %d (pin %d, inverted=%d)\n",
+		   gpio_get_value(dac->gpio_shutdown), dac->gpio_shutdown,
+		   dac->shutdown_inverted);
+	seq_putc(s, '\n');
+
+	/* PCM runtime info */
+	substream = dac->active_substream;
+	if (substream && substream->runtime) {
+		prtd = substream->runtime->private_data;
+		if (prtd) {
+			seq_printf(s, "DMA running:      %s\n",
+				   prtd->running ? "yes" : "no");
+			seq_printf(s, "Current period:   %u\n",
+				   prtd->current_period);
+			seq_printf(s, "Next source:      %u\n",
+				   prtd->next_source_period);
+			seq_printf(s, "Total periods:    %u\n",
+				   prtd->total_periods);
+			seq_printf(s, "Period bytes:     %zu\n",
+				   prtd->period_bytes);
+			seq_printf(s, "Process buf size: %zu\n",
+				   prtd->process_buf_size);
+			seq_printf(s, "DMA addr:         0x%pad\n",
+				   &prtd->dma_addr);
+			seq_printf(s, "DAC0 slave dst:   0x%pad\n",
+				   &prtd->slave_config_left.dst_addr);
+			if (prtd->dma_chan_right)
+				seq_printf(s, "DAC1 slave dst:   0x%pad\n",
+					   &prtd->slave_config_right.dst_addr);
+		}
+	} else {
+		seq_puts(s, "No active PCM substream\n");
+	}
+
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(dac_state);
+
+static ssize_t dma_buffer_read(struct file *file, char __user *user_buf,
+			       size_t count, loff_t *ppos)
+{
+	struct mcf54418_dac *dac = file->private_data;
+	struct snd_pcm_substream *substream;
+	struct mcf54418_dac_pcm_runtime *prtd;
+	struct {
+		u32 magic;
+		u32 period_bytes;
+		u32 channels;
+		u32 format;
+		u32 current_period;
+	} __packed header;
+	const void *period_data;
+	size_t total_size;
+	char *buf;
+	ssize_t ret;
+
+	substream = dac->active_substream;
+	if (!substream || !substream->runtime ||
+	    !substream->runtime->private_data)
+		return -ENODEV;
+
+	prtd = substream->runtime->private_data;
+	if (!prtd->period_bytes || !substream->runtime->dma_area)
+		return -ENODEV;
+
+	header.magic = 0x44414342;  /* "DACB" */
+	header.period_bytes = prtd->period_bytes;
+	header.channels = prtd->channels;
+	header.format = dac->format;
+	header.current_period = prtd->current_period;
+
+	total_size = sizeof(header) + prtd->period_bytes;
+	buf = kmalloc(total_size, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	memcpy(buf, &header, sizeof(header));
+	period_data = substream->runtime->dma_area +
+		      (prtd->current_period * prtd->period_bytes);
+	memcpy(buf + sizeof(header), period_data, prtd->period_bytes);
+
+	ret = simple_read_from_buffer(user_buf, count, ppos, buf, total_size);
+	kfree(buf);
+	return ret;
+}
+
+static const struct file_operations dma_buffer_fops = {
+	.open = simple_open,
+	.read = dma_buffer_read,
+	.llseek = default_llseek,
+};
+
+static ssize_t process_buf_dac_read(struct file *file, char __user *user_buf,
+				    size_t count, loff_t *ppos, int dac_num)
+{
+	struct mcf54418_dac *dac = file->private_data;
+	struct snd_pcm_substream *substream;
+	struct mcf54418_dac_pcm_runtime *prtd;
+	void *buf;
+	size_t size;
+
+	substream = dac->active_substream;
+	if (!substream || !substream->runtime ||
+	    !substream->runtime->private_data)
+		return -ENODEV;
+
+	prtd = substream->runtime->private_data;
+	/* Show the last-written half of the cyclic buffer */
+	{
+		size_t off = (prtd->process_buf_idx ^ 1) * prtd->process_buf_size;
+
+		buf = dac_num ? prtd->process_buf_dac1 + off
+			      : prtd->process_buf_dac0 + off;
+	}
+	size = prtd->process_buf_size;
+
+	if (!buf || !size)
+		return -ENODEV;
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, size);
+}
+
+static ssize_t process_buf_dac0_read(struct file *file, char __user *user_buf,
+				     size_t count, loff_t *ppos)
+{
+	return process_buf_dac_read(file, user_buf, count, ppos, 0);
+}
+
+static ssize_t process_buf_dac1_read(struct file *file, char __user *user_buf,
+				     size_t count, loff_t *ppos)
+{
+	return process_buf_dac_read(file, user_buf, count, ppos, 1);
+}
+
+static const struct file_operations process_buf_dac0_fops = {
+	.open = simple_open,
+	.read = process_buf_dac0_read,
+	.llseek = default_llseek,
+};
+
+static const struct file_operations process_buf_dac1_fops = {
+	.open = simple_open,
+	.read = process_buf_dac1_read,
+	.llseek = default_llseek,
+};
+
+static int dac_snapshot_show(struct seq_file *s, void *data)
+{
+	struct mcf54418_dac *dac = s->private;
+	struct snd_pcm_substream *substream;
+	struct mcf54418_dac_pcm_runtime *prtd;
+	const u16 *alsa_buf;
+	const u16 *dac0_buf;
+	const u16 *dac1_buf;
+	unsigned int n_samples, n_show, i;
+	bool all_in_range = true;
+	bool need_dac1;
+
+	substream = dac->active_substream;
+	if (!substream || !substream->runtime ||
+	    !substream->runtime->private_data) {
+		seq_puts(s, "No active PCM substream\n");
+		return 0;
+	}
+
+	prtd = substream->runtime->private_data;
+	if (!prtd->period_bytes || !substream->runtime->dma_area) {
+		seq_puts(s, "No DMA buffer available\n");
+		return 0;
+	}
+
+	need_dac1 = (prtd->channels == 2) || dac->dual_mono;
+
+	/* Point to current period in ALSA buffer */
+	alsa_buf = (const u16 *)(substream->runtime->dma_area +
+				  (prtd->current_period * prtd->period_bytes));
+	{
+		size_t off = (prtd->process_buf_idx ^ 1) * prtd->process_buf_size;
+
+		dac0_buf = prtd->process_buf_dac0 + off;
+		dac1_buf = prtd->process_buf_dac1 + off;
+	}
+
+	/* Number of per-channel samples in the process buffer */
+	n_samples = prtd->process_buf_size / 2;
+	n_show = min_t(unsigned int, n_samples, DAC_DEBUGFS_SNAPSHOT_SAMPLES);
+
+	/* ALSA buffer dump */
+	seq_printf(s, "ALSA buffer (period %u, %s %s):\n",
+		   prtd->current_period,
+		   prtd->channels == 2 ? "stereo" : "mono",
+		   "U16_BE");
+
+	if (prtd->channels == 2) {
+		for (i = 0; i < n_show; i++)
+			seq_printf(s, "  [%04u] L=0x%04x R=0x%04x\n",
+				   i, alsa_buf[i * 2], alsa_buf[i * 2 + 1]);
+	} else {
+		for (i = 0; i < n_show; i++)
+			seq_printf(s, "  [%04u] 0x%04x\n", i, alsa_buf[i]);
+	}
+	seq_putc(s, '\n');
+
+	/* DAC0 process buffer */
+	if (dac0_buf) {
+		seq_printf(s, "DAC0 process buffer (after volume=%u):\n",
+			   dac->volume_dac0);
+		for (i = 0; i < n_show; i++) {
+			u16 sample = dac0_buf[i];
+
+			seq_printf(s, "  [%04u] 0x%04x", i, sample);
+			if (sample > 0x0FFF) {
+				seq_puts(s, "  ** OUT OF 12-BIT RANGE **");
+				all_in_range = false;
+			}
+			seq_putc(s, '\n');
+		}
+		seq_putc(s, '\n');
+	}
+
+	/* DAC1 process buffer */
+	if (need_dac1 && dac1_buf) {
+		seq_printf(s, "DAC1 process buffer (after volume=%u):\n",
+			   dac->volume_dac1);
+		for (i = 0; i < n_show; i++) {
+			u16 sample = dac1_buf[i];
+
+			seq_printf(s, "  [%04u] 0x%04x", i, sample);
+			if (sample > 0x0FFF) {
+				seq_puts(s, "  ** OUT OF 12-BIT RANGE **");
+				all_in_range = false;
+			}
+			seq_putc(s, '\n');
+		}
+		seq_putc(s, '\n');
+	}
+
+	/* Full range check on all samples */
+	if (dac0_buf) {
+		for (i = 0; i < n_samples; i++) {
+			if (dac0_buf[i] > 0x0FFF) {
+				all_in_range = false;
+				break;
+			}
+		}
+	}
+	if (all_in_range && need_dac1 && dac1_buf) {
+		for (i = 0; i < n_samples; i++) {
+			if (dac1_buf[i] > 0x0FFF) {
+				all_in_range = false;
+				break;
+			}
+		}
+	}
+
+	seq_printf(s, "12-bit range check [0x000..0xFFF]: %s\n",
+		   all_in_range ? "OK" : "FAIL");
+
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(dac_snapshot);
+
+/*
+ * inject_test: write test patterns into the ALSA DMA buffer.
+ * Commands: "silence", "ramp", "square <freq>", "sine <freq>"
+ */
+
+/* Simple 256-entry sine table (Q15 format, amplitude ~2047 for 12-bit DAC) */
+static const s16 sine_table_256[256] = {
+	   0,   50,  100,  150,  200,  249,  297,  345,
+	 392,  437,  482,  526,  568,  609,  649,  687,
+	 724,  759,  792,  823,  852,  879,  904,  927,
+	 947,  966,  982,  995, 1007, 1016, 1022, 1026,
+	1028, 1026, 1022, 1016, 1007,  995,  982,  966,
+	 947,  927,  904,  879,  852,  823,  792,  759,
+	 724,  687,  649,  609,  568,  526,  482,  437,
+	 392,  345,  297,  249,  200,  150,  100,   50,
+	   0,  -50, -100, -150, -200, -249, -297, -345,
+	-392, -437, -482, -526, -568, -609, -649, -687,
+	-724, -759, -792, -823, -852, -879, -904, -927,
+	-947, -966, -982, -995,
+	-1007, -1016, -1022, -1026, -1028, -1026, -1022, -1016,
+	-1007, -995, -982, -966,
+	-947, -927, -904, -879, -852, -823, -792, -759,
+	-724, -687, -649, -609, -568, -526, -482, -437,
+	-392, -345, -297, -249, -200, -150, -100, -50,
+	0, 50, 100, 150, 200, 249, 297, 345,
+	392, 437, 482, 526, 568, 609, 649, 687,
+	724, 759, 792, 823, 852, 879, 904, 927,
+	947, 966, 982, 995, 1007, 1016, 1022, 1026,
+	1028, 1026, 1022, 1016, 1007, 995, 982, 966,
+	947, 927, 904, 879, 852, 823, 792, 759,
+	724, 687, 649, 609, 568, 526, 482, 437,
+	392, 345, 297, 249, 200, 150, 100, 50,
+	0, -50, -100, -150, -200, -249, -297, -345,
+	-392, -437, -482, -526, -568, -609, -649, -687,
+	-724, -759, -792, -823, -852, -879, -904, -927,
+	-947, -966, -982, -995,
+	-1007, -1016, -1022, -1026, -1028, -1026, -1022, -1016,
+	-1007, -995, -982, -966,
+	-947, -927, -904, -879, -852, -823, -792, -759,
+	-724, -687, -649, -609, -568, -526, -482, -437,
+	-392, -345, -297, -249, -200, -150, -100, -50,
+};
+
+static ssize_t inject_test_write(struct file *file, const char __user *user_buf,
+				 size_t count, loff_t *ppos)
+{
+	struct mcf54418_dac *dac = file->private_data;
+	struct snd_pcm_substream *substream;
+	struct mcf54418_dac_pcm_runtime *prtd;
+	char cmd[64];
+	u16 *buf;
+	size_t total_samples, i;
+	unsigned int freq = 0;
+	size_t len;
+
+	if (count >= sizeof(cmd))
+		return -EINVAL;
+
+	if (copy_from_user(cmd, user_buf, count))
+		return -EFAULT;
+
+	cmd[count] = '\0';
+	/* Strip trailing newline */
+	len = strlen(cmd);
+	while (len > 0 && (cmd[len - 1] == '\n' || cmd[len - 1] == '\r'))
+		cmd[--len] = '\0';
+
+	substream = dac->active_substream;
+	if (!substream || !substream->runtime ||
+	    !substream->runtime->private_data)
+		return -ENODEV;
+
+	prtd = substream->runtime->private_data;
+	if (!substream->runtime->dma_area || !prtd->period_bytes)
+		return -ENODEV;
+
+	/* Fill ALL periods in the buffer */
+	buf = (u16 *)substream->runtime->dma_area;
+	total_samples = (prtd->period_bytes * prtd->total_periods) / 2;
+
+	if (strcmp(cmd, "silence") == 0) {
+		for (i = 0; i < total_samples; i++)
+			buf[i] = 0x0800;
+		dev_info(dac->dev, "inject_test: silence (0x0800) x %zu\n",
+			 total_samples);
+	} else if (strcmp(cmd, "ramp") == 0) {
+		for (i = 0; i < total_samples; i++)
+			buf[i] = (u16)(i & 0x0FFF);
+		dev_info(dac->dev, "inject_test: ramp 0x000->0xFFF x %zu\n",
+			 total_samples);
+	} else if (sscanf(cmd, "square %u", &freq) == 1) {
+		unsigned int half_period;
+
+		if (freq == 0 || !dac->sample_rate)
+			return -EINVAL;
+		half_period = dac->sample_rate / (2 * freq);
+		if (half_period == 0)
+			half_period = 1;
+		for (i = 0; i < total_samples; i++) {
+			if ((i / half_period) & 1)
+				buf[i] = 0x0200;  /* Low */
+			else
+				buf[i] = 0x0E00;  /* High */
+		}
+		dev_info(dac->dev, "inject_test: square %u Hz x %zu\n",
+			 freq, total_samples);
+	} else if (sscanf(cmd, "sine %u", &freq) == 1) {
+		unsigned int phase_inc;
+
+		if (freq == 0 || !dac->sample_rate)
+			return -EINVAL;
+		/* phase_inc = 256 * freq / sample_rate (fixed point) */
+		phase_inc = (256 * freq) / dac->sample_rate;
+		if (phase_inc == 0)
+			phase_inc = 1;
+		for (i = 0; i < total_samples; i++) {
+			unsigned int idx = (i * phase_inc) & 0xFF;
+
+			buf[i] = (u16)(sine_table_256[idx] + 0x0800);
+		}
+		dev_info(dac->dev, "inject_test: sine %u Hz x %zu\n",
+			 freq, total_samples);
+	} else {
+		dev_err(dac->dev, "inject_test: unknown command '%s'\n", cmd);
+		return -EINVAL;
+	}
+
+	return count;
+}
+
+static const struct file_operations inject_test_fops = {
+	.open = simple_open,
+	.write = inject_test_write,
+	.llseek = noop_llseek,
+};
+
+static void mcf54418_dac_debugfs_init(struct mcf54418_dac *dac)
+{
+	struct dentry *root;
+
+	root = debugfs_create_dir("mcf54418-dac", NULL);
+	dac->debugfs_root = root;
+
+	debugfs_create_file("dac_state", 0444, root, dac, &dac_state_fops);
+	debugfs_create_file("dma_buffer", 0444, root, dac, &dma_buffer_fops);
+	debugfs_create_file("process_buf_dac0", 0444, root, dac,
+			    &process_buf_dac0_fops);
+	debugfs_create_file("process_buf_dac1", 0444, root, dac,
+			    &process_buf_dac1_fops);
+	debugfs_create_file("dac_snapshot", 0444, root, dac,
+			    &dac_snapshot_fops);
+	debugfs_create_file("inject_test", 0200, root, dac,
+			    &inject_test_fops);
+}
+
+static void mcf54418_dac_debugfs_exit(struct mcf54418_dac *dac)
+{
+	debugfs_remove_recursive(dac->debugfs_root);
+}
+
+#else /* !CONFIG_DEBUG_FS */
+
+static inline void mcf54418_dac_debugfs_init(struct mcf54418_dac *dac) {}
+static inline void mcf54418_dac_debugfs_exit(struct mcf54418_dac *dac) {}
+
+#endif /* CONFIG_DEBUG_FS */
+
 static int mcf54418_dac_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct mcf54418_dac *dac;
 	struct resource *res;
+	dma_addr_t dac0_phys_addr;
 	int ret;
 
 	dac = devm_kzalloc(dev, sizeof(*dac), GFP_KERNEL);
@@ -1237,7 +1926,9 @@ static int mcf54418_dac_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	dac->dev = dev;
-	dac->volume = 8;  /* Max volume by default */
+	dac->volume_dac0 = DAC_VOLUME_MAX;  /* Max volume by default */
+	dac->volume_dac1 = DAC_VOLUME_MAX;
+	dac->dual_mono = false;  /* Disabled by default (REQ 05050) */
 
 	/* Get memory resources */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -1246,7 +1937,7 @@ static int mcf54418_dac_probe(struct platform_device *pdev)
 		return PTR_ERR(dac->dac0_base);
 
 	/* Save DAC0 physical address for DMA */
-	dma_addr_t dac0_phys_addr = res->start;
+	dac0_phys_addr = res->start;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	dac->dac1_base = devm_ioremap_resource(dev, res);
@@ -1309,8 +2000,8 @@ static int mcf54418_dac_probe(struct platform_device *pdev)
 			 dac->gpio_mute, dac->gpio_shutdown);
 	}
 
-	dac->mute_inverted = true;  /* GPIO LOW = unmuted */
-	dac->shutdown_inverted = true;  /* GPIO LOW = powered on */
+	dac->mute_inverted = false;  /* GPIO HIGH = unmuted */
+	dac->shutdown_inverted = false;  /* GPIO HIGH = powered on */
 
 	ret = gpio_request(dac->gpio_mute, "audio-mute");
 	if (ret) {
@@ -1326,8 +2017,8 @@ static int mcf54418_dac_probe(struct platform_device *pdev)
 		goto err_gpio_mute;
 	}
 
-	gpio_direction_output(dac->gpio_mute, 0);	/* LOW = unmuted */
-	gpio_direction_output(dac->gpio_shutdown, 0);	/* LOW = powered on */
+	gpio_direction_output(dac->gpio_mute, 1);	/* HIGH = unmuted */
+	gpio_direction_output(dac->gpio_shutdown, 1);	/* HIGH = powered on */
 
 	/* Setup DMA parameters for compat mode (non-DT platform) */
 	dac->dma_params_tx.addr = dac0_phys_addr + DAC_DATA;
@@ -1345,6 +2036,8 @@ static int mcf54418_dac_probe(struct platform_device *pdev)
 		goto err_gpio_shutdown;
 	}
 
+	mcf54418_dac_debugfs_init(dac);
+
 	dev_info(dev, "MCF54418 DAC driver registered\n");
 	return 0;
 
@@ -1361,6 +2054,7 @@ static void mcf54418_dac_remove(struct platform_device *pdev)
 {
 	struct mcf54418_dac *dac = platform_get_drvdata(pdev);
 
+	mcf54418_dac_debugfs_exit(dac);
 	mcf54418_dac_enable(dac, false);
 
 	gpio_set_value(dac->gpio_mute, 1);	/* HIGH = Mute */
