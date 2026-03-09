@@ -482,7 +482,7 @@ void fsl_edma_fill_tcd(struct fsl_edma_chan *fsl_chan,
 		       struct fsl_edma_hw_tcd *tcd, dma_addr_t src, dma_addr_t dst,
 		       u16 attr, u16 soff, u32 nbytes, dma_addr_t slast, u16 citer,
 		       u16 biter, u16 doff, dma_addr_t dlast_sga, bool major_int,
-		       bool disable_req, bool enable_sg)
+		       bool disable_req, bool enable_sg, bool int_half)
 {
 	struct dma_slave_config *cfg = &fsl_chan->cfg;
 	u32 burst = 0;
@@ -549,6 +549,9 @@ void fsl_edma_fill_tcd(struct fsl_edma_chan *fsl_chan,
 	if (enable_sg)
 		csr |= EDMA_TCD_CSR_E_SG;
 
+	if (int_half)
+		csr |= EDMA_TCD_CSR_INT_HALF;
+
 	if (fsl_chan->is_rxchan)
 		csr |= EDMA_TCD_CSR_ACTIVE;
 
@@ -612,13 +615,7 @@ struct dma_async_tx_descriptor *fsl_edma_prep_dma_cyclic(
 		return NULL;
 
 	sg_len = buf_len / period_len;
-	fsl_desc = fsl_edma_alloc_desc(fsl_chan, sg_len);
-	if (!fsl_desc)
-		return NULL;
-	fsl_desc->iscyclic = true;
-	fsl_desc->dirn = direction;
 
-	dma_buf_next = dma_addr;
 	if (direction == DMA_MEM_TO_DEV) {
 		fsl_chan->attr =
 			fsl_edma_get_tcd_attr(fsl_chan->cfg.dst_addr_width);
@@ -631,8 +628,58 @@ struct dma_async_tx_descriptor *fsl_edma_prep_dma_cyclic(
 			fsl_chan->cfg.src_maxburst;
 	}
 
+	/*
+	 * Optimized path for 2-period cyclic: use a single TCD with SLAST
+	 * auto-wrap and INT_HALF, like the classic ColdFire DAC driver.
+	 * The DMA runs continuously without scatter-gather overhead.
+	 * INT_HALF fires after the first half, INT_MAJOR after the second.
+	 */
+	if (sg_len == 2) {
+		dma_addr_t slast;
+
+		iter = buf_len / nbytes;
+
+		fsl_desc = fsl_edma_alloc_desc(fsl_chan, 1);
+		if (!fsl_desc)
+			return NULL;
+		fsl_desc->iscyclic = true;
+		fsl_desc->dirn = direction;
+
+		if (direction == DMA_MEM_TO_DEV) {
+			src_addr = dma_addr;
+			dst_addr = fsl_chan->dma_dev_addr;
+			soff = fsl_chan->cfg.dst_addr_width;
+			doff = fsl_chan->is_multi_fifo ? 4 : 0;
+			slast = (dma_addr_t)(-(s32)buf_len);
+		} else {
+			src_addr = fsl_chan->dma_dev_addr;
+			dst_addr = dma_addr;
+			soff = fsl_chan->is_multi_fifo ? 4 : 0;
+			doff = fsl_chan->cfg.src_addr_width;
+			slast = 0;
+		}
+
+		fsl_edma_fill_tcd(fsl_chan, fsl_desc->tcd[0].vtcd,
+				  src_addr, dst_addr, fsl_chan->attr,
+				  soff, nbytes, slast, iter, iter, doff,
+				  direction == DMA_DEV_TO_MEM ?
+					(dma_addr_t)(-(s32)buf_len) : 0,
+				  true, false, false, true);
+
+		return vchan_tx_prep(&fsl_chan->vchan, &fsl_desc->vdesc,
+				     flags);
+	}
+
+	/* Multi-period path: use scatter-gather TCD chaining */
+	fsl_desc = fsl_edma_alloc_desc(fsl_chan, sg_len);
+	if (!fsl_desc)
+		return NULL;
+	fsl_desc->iscyclic = true;
+	fsl_desc->dirn = direction;
+
 	iter = period_len / nbytes;
 
+	dma_buf_next = dma_addr;
 	for (i = 0; i < sg_len; i++) {
 		if (dma_buf_next >= dma_addr + buf_len)
 			dma_buf_next = dma_addr;
@@ -664,7 +711,8 @@ struct dma_async_tx_descriptor *fsl_edma_prep_dma_cyclic(
 
 		fsl_edma_fill_tcd(fsl_chan, fsl_desc->tcd[i].vtcd, src_addr, dst_addr,
 				  fsl_chan->attr, soff, nbytes, 0, iter,
-				  iter, doff, last_sg, major_int, false, true);
+				  iter, doff, last_sg, major_int, false, true,
+				  false);
 		dma_buf_next += period_len;
 	}
 
@@ -755,13 +803,13 @@ struct dma_async_tx_descriptor *fsl_edma_prep_slave_sg(
 			fsl_edma_fill_tcd(fsl_chan, fsl_desc->tcd[i].vtcd, src_addr,
 					  dst_addr, fsl_chan->attr, soff,
 					  nbytes, 0, iter, iter, doff, last_sg,
-					  false, false, true);
+					  false, false, true, false);
 		} else {
 			last_sg = 0;
 			fsl_edma_fill_tcd(fsl_chan, fsl_desc->tcd[i].vtcd, src_addr,
 					  dst_addr, fsl_chan->attr, soff,
 					  nbytes, 0, iter, iter, doff, last_sg,
-					  true, true, false);
+					  true, true, false, false);
 		}
 	}
 
@@ -787,7 +835,7 @@ struct dma_async_tx_descriptor *fsl_edma_prep_memcpy(struct dma_chan *chan,
 	/* To match with copy_align and max_seg_size so 1 tcd is enough */
 	fsl_edma_fill_tcd(fsl_chan, fsl_desc->tcd[0].vtcd, dma_src, dma_dst,
 			fsl_edma_get_tcd_attr(DMA_SLAVE_BUSWIDTH_32_BYTES),
-			32, len, 0, 1, 1, 32, 0, true, true, false);
+			32, len, 0, 1, 1, 32, 0, true, true, false, false);
 
 	return vchan_tx_prep(&fsl_chan->vchan, &fsl_desc->vdesc, flags);
 }
@@ -878,7 +926,7 @@ struct dma_async_tx_descriptor *fsl_edma_prep_interleaved_dma(
 	 */
 	fsl_edma_fill_tcd(fsl_chan, fsl_desc->tcd[0].vtcd, src_addr, dst_addr,
 			  attr, soff, nbytes, 0, iter, iter, doff, 0,
-			  true, true, false);
+			  true, true, false, false);
 
 	return vchan_tx_prep(&fsl_chan->vchan, &fsl_desc->vdesc, flags);
 }
