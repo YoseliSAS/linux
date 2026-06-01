@@ -10276,6 +10276,12 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/crypto/fsl,sec-v4.0*
 F:	drivers/crypto/caam/
 
+FREESCALE COLDFIRE M5441X DMA TIMER DRIVER
+M:	Jean-Michel Hautbois <jeanmichel.hautbois@yoseli.org>
+L:	linux-m68k@vger.kernel.org
+S:	Maintained
+F:	drivers/clocksource/mcf_dma_timer.c
+
 FREESCALE COLDFIRE M5441X MMC DRIVER
 M:	Angelo Dureghello <adureghello@baylibre.com>
 L:	linux-mmc@vger.kernel.org

@@ -824,4 +824,15 @@ choice
 
 endchoice
 
+config COLDFIRE_DMA_TIMERS
+	bool "ColdFire DMA timer clocksource"
+	depends on M5441x
+	select GENERIC_SCHED_CLOCK
+	help
+	  Enable support for the Freescale ColdFire MCF5441x DMA timers
+	  (DTIM0-DTIM3) as a clocksource, sched_clock and oneshot
+	  clockevent. This provides a high-resolution time source on a SoC
+	  that otherwise only has the coarse-grained PIT, enabling finer
+	  scheduler resolution and high-resolution timers.
+
 endmenu
