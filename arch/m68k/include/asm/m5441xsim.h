@@ -104,6 +104,19 @@
 #define MCFINT2_RTC		26
 
 /*
+ * DMA timer module.
+ */
+#define MCFDMATIMER_BASE0	0xFC070000	/* Base address of DMA timer 0 */
+#define MCFDMATIMER_BASE1	0xFC074000	/* Base address of DMA timer 1 */
+#define MCFDMATIMER_BASE2	0xFC078000	/* Base address of DMA timer 2 */
+#define MCFDMATIMER_BASE3	0xFC07C000	/* Base address of DMA timer 3 */
+
+#define MCFDMATIMER_IRQ_DTIM0	(MCFINT0_VECBASE + MCFINT0_TIMER0)
+#define MCFDMATIMER_IRQ_DTIM1	(MCFINT0_VECBASE + MCFINT0_TIMER1)
+#define MCFDMATIMER_IRQ_DTIM2	(MCFINT0_VECBASE + MCFINT0_TIMER2)
+#define MCFDMATIMER_IRQ_DTIM3	(MCFINT0_VECBASE + MCFINT0_TIMER3)
+
+/*
  *  PIT timer module.
  */
 #define	MCFPIT_BASE0		0xFC080000	/* Base address of TIMER0 */

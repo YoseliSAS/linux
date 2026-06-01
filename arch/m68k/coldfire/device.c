@@ -622,8 +622,37 @@ static struct platform_device mcf_flexcan0 = {
 };
 #endif /* MCFFLEXCAN_SIZE */
 
+#ifdef MCFDMATIMER_BASE2
+/*
+ * The M5441x DMA timers can be used as a clocksource and clockevent. Register
+ * DMA timer 2 for the mcf_dma_timer driver; it binds by the "mcftmr" name and
+ * looks up its clock through the "mcftmr.2" clkdev alias.
+ */
+static struct resource mcf_dmatmr2_resources[] = {
+	{
+		.start	= MCFDMATIMER_BASE2,
+		.end	= MCFDMATIMER_BASE2 + 0xf,
+		.flags	= IORESOURCE_MEM,
+	}, {
+		.start	= MCFDMATIMER_IRQ_DTIM2,
+		.end	= MCFDMATIMER_IRQ_DTIM2,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device mcf_dmatmr2 = {
+	.name			= "mcftmr",
+	.id			= 2,
+	.num_resources		= ARRAY_SIZE(mcf_dmatmr2_resources),
+	.resource		= mcf_dmatmr2_resources,
+};
+#endif /* MCFDMATIMER_BASE2 */
+
 static struct platform_device *mcf_devices[] __initdata = {
 	&mcf_uart,
+#ifdef MCFDMATIMER_BASE2
+	&mcf_dmatmr2,
+#endif
 #ifdef MCFFEC_BASE0
 	&mcf_fec0,
 #endif
